@@ -41,60 +41,6 @@ function processDiscourseAvatarTemplate(template, baseUrl = 'https://connect.lin
     return `${baseUrl}${path}`;
 }
 
-/**
- * 下载远程图片并转换为 data URL
- * @param {string} imageUrl 图片 URL
- * @returns {Promise<string|null>} data URL 格式的图片，失败返回 null
- */
-async function downloadAvatarAsDataUrl(imageUrl) {
-    if (!imageUrl) return null;
-
-    try {
-        console.log(`📥 开始下载头像: ${imageUrl}`);
-
-        // 使用完整的浏览器请求头来避免被反爬虫系统拦截
-        const response = await fetch(imageUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': imageUrl.includes('linux.do') ? 'https://linux.do/' : imageUrl.substring(0, imageUrl.indexOf('/', 8) + 1),
-                'Connection': 'keep-alive',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-                'Sec-Fetch-Dest': 'image',
-                'Sec-Fetch-Mode': 'no-cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"',
-            },
-        });
-
-        if (!response.ok) {
-            console.error(`头像下载失败: ${response.status} ${response.statusText}`);
-            console.error(`请求URL: ${imageUrl}`);
-            return null;
-        }
-
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.startsWith('image/')) {
-            console.error(`返回的不是图片格式: ${contentType}`);
-            return null;
-        }
-
-        const buffer = await response.arrayBuffer();
-        const base64 = Buffer.from(buffer).toString('base64');
-        const dataUrl = `data:${contentType};base64,${base64}`;
-
-        console.log(`✅ 头像下载成功，大小: ${(buffer.byteLength / 1024).toFixed(2)} KB`);
-        return dataUrl;
-    } catch (error) {
-        console.error(`下载头像时出错:`, error.message);
-        return null;
-    }
-}
 
 /**
  * 解码JWT token（仅解码payload，不验证签名）
@@ -216,7 +162,7 @@ function getOAuthConfig(request) {
             callbackUrl: linuxdoCallbackUrl,
             authUrl: String(getConfigValue('oauth.linuxdo.authUrl', 'https://connect.linux.do/oauth2/authorize') || 'https://connect.linux.do/oauth2/authorize'),
             tokenUrl: String(getConfigValue('oauth.linuxdo.tokenUrl', 'https://connect.linux.do/oauth2/token') || 'https://connect.linux.do/oauth2/token'),
-            userInfoUrl: String(getConfigValue('oauth.linuxdo.userInfoUrl', 'https://connect.linux.do/oauth2/userinfo') || 'https://connect.linux.do/oauth2/userinfo'),
+            userInfoUrl: String(getConfigValue('oauth.linuxdo.userInfoUrl', 'https://connect.linux.do/api/user') || 'https://connect.linux.do/oauth2/userinfo'),
         },
     };
 }
@@ -750,17 +696,10 @@ async function handleOAuthLogin(request, response, provider, userData) {
             await storage.setItem(toKey(normalizedHandle), user);
             console.log(`Created new user via ${provider} OAuth:`, normalizedHandle);
 
-            // 下载并保存头像（如果有）
+            // 保存头像 URL（如果有），让前端直接使用
             if (avatar) {
-                const avatarDataUrl = await downloadAvatarAsDataUrl(avatar);
-                if (avatarDataUrl) {
-                    await storage.setItem(toAvatarKey(normalizedHandle), avatarDataUrl);
-                    console.log(`✅ ${provider} 头像已保存到用户 ${normalizedHandle}`);
-                } else {
-                    // 如果下载失败，保存原始URL，让前端直接使用
-                    console.warn(`⚠ 无法下载 ${provider} 头像，保存头像URL供前端使用`);
-                    await storage.setItem(toAvatarKey(normalizedHandle), avatar);
-                }
+                await storage.setItem(toAvatarKey(normalizedHandle), avatar);
+                console.log(`✅ ${provider} 头像 URL 已保存到用户 ${normalizedHandle}: ${avatar}`);
             }
 
             // 创建用户目录并初始化默认内容
@@ -782,16 +721,9 @@ async function handleOAuthLogin(request, response, provider, userData) {
             if (avatar) {
                 user.avatar = avatar;
 
-                // 下载并更新头像（每次登录都更新，确保头像是最新的）
-                const avatarDataUrl = await downloadAvatarAsDataUrl(avatar);
-                if (avatarDataUrl) {
-                    await storage.setItem(toAvatarKey(normalizedHandle), avatarDataUrl);
-                    console.log(`✅ ${provider} 头像已更新到用户 ${normalizedHandle}`);
-                } else {
-                    // 如果下载失败，保存原始URL
-                    console.warn(`⚠ 无法下载 ${provider} 头像，保存头像URL供前端使用`);
-                    await storage.setItem(toAvatarKey(normalizedHandle), avatar);
-                }
+                // 保存/更新头像 URL（每次登录都更新，确保头像是最新的）
+                await storage.setItem(toAvatarKey(normalizedHandle), avatar);
+                console.log(`✅ ${provider} 头像 URL 已更新到用户 ${normalizedHandle}: ${avatar}`);
             }
             await storage.setItem(toKey(normalizedHandle), user);
         }
@@ -861,17 +793,10 @@ router.post('/verify-invitation', async (request, response) => {
         await storage.setItem(toKey(pendingUser.handle), user);
         console.log(`Created new user via ${pendingUser.provider} OAuth with invitation code:`, pendingUser.handle);
 
-        // 下载并保存头像（如果有）
+        // 保存头像 URL（如果有）
         if (pendingUser.avatar) {
-            const avatarDataUrl = await downloadAvatarAsDataUrl(pendingUser.avatar);
-            if (avatarDataUrl) {
-                await storage.setItem(toAvatarKey(pendingUser.handle), avatarDataUrl);
-                console.log(`✅ ${pendingUser.provider} 头像已保存到用户 ${pendingUser.handle}`);
-            } else {
-                // 如果下载失败，保存原始URL
-                console.warn(`⚠ 无法下载 ${pendingUser.provider} 头像，保存头像URL供前端使用`);
-                await storage.setItem(toAvatarKey(pendingUser.handle), pendingUser.avatar);
-            }
+            await storage.setItem(toAvatarKey(pendingUser.handle), pendingUser.avatar);
+            console.log(`✅ ${pendingUser.provider} 头像 URL 已保存到用户 ${pendingUser.handle}: ${pendingUser.avatar}`);
         }
 
         // 使用邀请码
