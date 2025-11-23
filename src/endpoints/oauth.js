@@ -22,6 +22,25 @@ import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
 export const router = express.Router();
 
 /**
+ * 处理 Discourse avatar template
+ * @param {string} template Avatar template 字符串
+ * @param {string} baseUrl 基础 URL
+ * @returns {string|null} 完整的头像 URL
+ */
+function processDiscourseAvatarTemplate(template, baseUrl = 'https://connect.linux.do') {
+    if (!template) return null;
+    
+    // 如果已经是完整 URL，直接返回
+    if (template.startsWith('http://') || template.startsWith('https://')) {
+        return template.replace('{size}', '96');
+    }
+    
+    // 处理相对路径，替换 {size} 占位符
+    const path = template.replace('{size}', '96');
+    return `${baseUrl}${path}`;
+}
+
+/**
  * 解码JWT token（仅解码payload，不验证签名）
  * @param {string} token JWT token
  * @returns {object|null} 解码后的payload对象，失败返回null
@@ -446,10 +465,18 @@ router.get('/linuxdo/callback', async (request, response) => {
 
         let userData;
 
+        // 调试日志：输出 token 响应
+        console.log('Linux.do OAuth token 响应:', {
+            has_id_token: !!tokenData.id_token,
+            has_access_token: !!tokenData.access_token,
+            token_type: tokenData.token_type,
+        });
+
         // OpenID Connect返回id_token，优先使用它（避免Cloudflare拦截userinfo端点）
         if (tokenData.id_token) {
             const decodedToken = decodeJWT(tokenData.id_token);
             if (decodedToken) {
+                console.log('从 id_token 解码的数据:', JSON.stringify(decodedToken, null, 2));
                 userData = decodedToken;
             }
         }
@@ -458,30 +485,59 @@ router.get('/linuxdo/callback', async (request, response) => {
         if (!userData && tokenData.access_token && tokenData.access_token.split('.').length === 3) {
             const decodedToken = decodeJWT(tokenData.access_token);
             if (decodedToken && decodedToken.sub) {
+                console.log('从 access_token 解码的数据:', JSON.stringify(decodedToken, null, 2));
                 userData = decodedToken;
             }
         }
 
         // 最后才尝试使用userinfo端点（可能被Cloudflare拦截）
         if (!userData && tokenData.access_token) {
-            try {
-                const userResponse = await fetch(oauthConfig.linuxdo.userInfoUrl, {
-                    headers: {
-                        'Authorization': `Bearer ${String(tokenData.access_token)}`,
-                        'Accept': 'application/json',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    },
-                });
+            // 尝试多个可能的端点
+            const endpoints = [
+                oauthConfig.linuxdo.userInfoUrl,
+                'https://connect.linux.do/api/user',
+                'https://connect.linux.do/session/current.json',
+                'https://connect.linux.do/users/me.json',
+            ];
 
-                // 检查用户信息响应状态
-                if (userResponse.ok) {
-                    const contentType = userResponse.headers.get('content-type');
-                    if (contentType && contentType.includes('application/json')) {
-                        userData = await userResponse.json();
+            for (const endpoint of endpoints) {
+                if (userData) break; // 如果已经获取到数据，跳出循环
+
+                try {
+                    console.log('尝试访问端点:', endpoint);
+                    const userResponse = await fetch(endpoint, {
+                        headers: {
+                            'Authorization': `Bearer ${String(tokenData.access_token)}`,
+                            'Accept': 'application/json',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        },
+                    });
+
+                    console.log(`端点 ${endpoint} 响应状态:`, userResponse.status, userResponse.statusText);
+
+                    // 检查用户信息响应状态
+                    if (userResponse.ok) {
+                        const contentType = userResponse.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            const data = await userResponse.json();
+                            console.log(`从端点 ${endpoint} 获取的完整数据:`, JSON.stringify(data, null, 2));
+                            
+                            // 检查数据是否包含有效的用户信息
+                            if (data && (data.username || data.preferred_username || data.name || data.sub || data.id)) {
+                                userData = data;
+                                console.log('✓ 成功从此端点获取用户数据');
+                                break;
+                            }
+                        } else {
+                            console.log(`端点 ${endpoint} 返回的不是 JSON:`, contentType);
+                        }
+                    } else {
+                        const errorText = await userResponse.text();
+                        console.error(`端点 ${endpoint} 请求失败:`, errorText.substring(0, 200));
                     }
+                } catch (error) {
+                    console.error(`访问端点 ${endpoint} 时出错:`, error.message);
                 }
-            } catch (error) {
-                // userinfo端点访问失败，跳过
             }
         }
 
@@ -534,11 +590,27 @@ async function handleOAuthLogin(request, response, provider, userData) {
                     : null;
                 break;
             case 'linuxdo':
-                userId = `linuxdo_${userData.sub || userData.id}`;
+                // 处理可能的嵌套数据结构（如 Discourse 可能返回 {user: {...}} 或 {current_user: {...}}）
+                const userInfo = userData.user || userData.current_user || userData;
+                
+                userId = `linuxdo_${userInfo.sub || userInfo.id || userData.sub || userData.id}`;
+                
                 // Discourse 返回的字段：username (主要), preferred_username (OIDC), name (备用)
-                username = userData.username || userData.preferred_username || userData.name || `linuxdo_user_${userData.sub || userData.id}`;
-                email = userData.email;
-                avatar = userData.picture || userData.avatar_url;
+                // 同时检查嵌套的 user 对象
+                username = userInfo.username || userData.username || 
+                          userInfo.preferred_username || userData.preferred_username || 
+                          userInfo.name || userData.name || 
+                          `linuxdo_user_${userInfo.sub || userInfo.id || userData.sub || userData.id}`;
+                
+                email = userInfo.email || userData.email;
+                
+                // 处理头像（Discourse 可能返回 avatar_template）
+                const avatarTemplate = userInfo.avatar_template || userData.avatar_template;
+                avatar = userInfo.picture || userData.picture || 
+                        userInfo.avatar_url || userData.avatar_url ||
+                        (avatarTemplate ? processDiscourseAvatarTemplate(avatarTemplate) : null);
+                
+                console.log('提取的用户信息:', { userId, username, email, avatar: avatar ? '(有)' : '(无)' });
                 break;
             default:
                 throw new Error('Unknown OAuth provider');
