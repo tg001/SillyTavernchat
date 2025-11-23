@@ -29,12 +29,12 @@ export const router = express.Router();
  */
 function processDiscourseAvatarTemplate(template, baseUrl = 'https://connect.linux.do') {
     if (!template) return null;
-    
+
     // 如果已经是完整 URL，直接返回
     if (template.startsWith('http://') || template.startsWith('https://')) {
         return template.replace('{size}', '96');
     }
-    
+
     // 处理相对路径，替换 {size} 占位符
     const path = template.replace('{size}', '96');
     return `${baseUrl}${path}`;
@@ -521,7 +521,7 @@ router.get('/linuxdo/callback', async (request, response) => {
                         if (contentType && contentType.includes('application/json')) {
                             const data = await userResponse.json();
                             console.log(`从端点 ${endpoint} 获取的完整数据:`, JSON.stringify(data, null, 2));
-                            
+
                             // 检查数据是否包含有效的用户信息
                             if (data && (data.username || data.preferred_username || data.name || data.sub || data.id)) {
                                 userData = data;
@@ -546,17 +546,10 @@ router.get('/linuxdo/callback', async (request, response) => {
             return response.status(400).send('Failed to get user information');
         }
 
-        // 调试日志：输出获取到的用户数据
-        console.log('Linux.do OAuth 用户数据:', JSON.stringify({
-            sub: userData.sub,
-            id: userData.id,
-            username: userData.username,
-            preferred_username: userData.preferred_username,
-            name: userData.name,
-            email: userData.email,
-            picture: userData.picture,
-            avatar_url: userData.avatar_url,
-        }, null, 2));
+        // 调试日志：输出完整的原始用户数据
+        console.log('========== Linux.do OAuth 调试信息 ==========');
+        console.log('完整的原始用户数据:', JSON.stringify(userData, null, 2));
+        console.log('==========================================');
 
         // 处理OAuth登录
         await handleOAuthLogin(request, response, 'linuxdo', userData);
@@ -592,25 +585,34 @@ async function handleOAuthLogin(request, response, provider, userData) {
             case 'linuxdo':
                 // 处理可能的嵌套数据结构（如 Discourse 可能返回 {user: {...}} 或 {current_user: {...}}）
                 const userInfo = userData.user || userData.current_user || userData;
-                
+
                 userId = `linuxdo_${userInfo.sub || userInfo.id || userData.sub || userData.id}`;
-                
-                // Discourse 返回的字段：username (主要), preferred_username (OIDC), name (备用)
-                // 同时检查嵌套的 user 对象
-                username = userInfo.username || userData.username || 
-                          userInfo.preferred_username || userData.preferred_username || 
-                          userInfo.name || userData.name || 
+
+                // Discourse 可能的返回字段优先级：
+                // 1. username - Discourse API 标准字段
+                // 2. login - GitHub 风格
+                // 3. preferred_username - OIDC 标准
+                // 4. name - 备用显示名称
+                username = userInfo.username || userData.username ||
+                          userInfo.login || userData.login ||
+                          userInfo.preferred_username || userData.preferred_username ||
+                          userInfo.name || userData.name ||
                           `linuxdo_user_${userInfo.sub || userInfo.id || userData.sub || userData.id}`;
-                
+
                 email = userInfo.email || userData.email;
-                
+
                 // 处理头像（Discourse 可能返回 avatar_template）
                 const avatarTemplate = userInfo.avatar_template || userData.avatar_template;
-                avatar = userInfo.picture || userData.picture || 
+                avatar = userInfo.picture || userData.picture ||
                         userInfo.avatar_url || userData.avatar_url ||
                         (avatarTemplate ? processDiscourseAvatarTemplate(avatarTemplate) : null);
-                
-                console.log('提取的用户信息:', { userId, username, email, avatar: avatar ? '(有)' : '(无)' });
+
+                console.log('======= 提取的用户信息 =======');
+                console.log('userId:', userId);
+                console.log('username:', username);
+                console.log('email:', email);
+                console.log('avatar:', avatar ? '(有)' : '(无)');
+                console.log('============================');
                 break;
             default:
                 throw new Error('Unknown OAuth provider');
