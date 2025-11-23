@@ -51,14 +51,30 @@ async function downloadAvatarAsDataUrl(imageUrl) {
 
     try {
         console.log(`📥 开始下载头像: ${imageUrl}`);
+
+        // 使用完整的浏览器请求头来避免被反爬虫系统拦截
         const response = await fetch(imageUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': imageUrl.includes('linux.do') ? 'https://linux.do/' : imageUrl.substring(0, imageUrl.indexOf('/', 8) + 1),
+                'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Sec-Fetch-Dest': 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
             },
         });
 
         if (!response.ok) {
             console.error(`头像下载失败: ${response.status} ${response.statusText}`);
+            console.error(`请求URL: ${imageUrl}`);
             return null;
         }
 
@@ -741,7 +757,9 @@ async function handleOAuthLogin(request, response, provider, userData) {
                     await storage.setItem(toAvatarKey(normalizedHandle), avatarDataUrl);
                     console.log(`✅ ${provider} 头像已保存到用户 ${normalizedHandle}`);
                 } else {
-                    console.warn(`⚠ 无法下载 ${provider} 头像`);
+                    // 如果下载失败，保存原始URL，让前端直接使用
+                    console.warn(`⚠ 无法下载 ${provider} 头像，保存头像URL供前端使用`);
+                    await storage.setItem(toAvatarKey(normalizedHandle), avatar);
                 }
             }
 
@@ -769,6 +787,10 @@ async function handleOAuthLogin(request, response, provider, userData) {
                 if (avatarDataUrl) {
                     await storage.setItem(toAvatarKey(normalizedHandle), avatarDataUrl);
                     console.log(`✅ ${provider} 头像已更新到用户 ${normalizedHandle}`);
+                } else {
+                    // 如果下载失败，保存原始URL
+                    console.warn(`⚠ 无法下载 ${provider} 头像，保存头像URL供前端使用`);
+                    await storage.setItem(toAvatarKey(normalizedHandle), avatar);
                 }
             }
             await storage.setItem(toKey(normalizedHandle), user);
@@ -846,7 +868,9 @@ router.post('/verify-invitation', async (request, response) => {
                 await storage.setItem(toAvatarKey(pendingUser.handle), avatarDataUrl);
                 console.log(`✅ ${pendingUser.provider} 头像已保存到用户 ${pendingUser.handle}`);
             } else {
-                console.warn(`⚠ 无法下载 ${pendingUser.provider} 头像`);
+                // 如果下载失败，保存原始URL
+                console.warn(`⚠ 无法下载 ${pendingUser.provider} 头像，保存头像URL供前端使用`);
+                await storage.setItem(toAvatarKey(pendingUser.handle), pendingUser.avatar);
             }
         }
 
