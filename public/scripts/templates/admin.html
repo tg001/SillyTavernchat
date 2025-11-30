@@ -117,6 +117,77 @@
                 <span>删除2个月未登录用户</span>
             </button>
         </div>
+
+        <!-- 定时任务配置区域 -->
+        <div class="scheduledTasksSection" style="margin: 20px 0; padding: 20px; background: var(--SmartThemeBlurTintColor); border-radius: 10px; color: var(--SmartThemeBodyColor);">
+            <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--SmartThemeBodyColor);">
+                <i class="fa-fw fa-solid fa-clock"></i>
+                定时任务配置
+            </h3>
+
+            <!-- 定时清理所有用户备份文件 -->
+            <div class="scheduledTaskItem" style="margin-bottom: 20px; padding: 15px; background: var(--SmartThemeBlurTintColor); border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor); color: var(--SmartThemeBodyColor);">
+                <div class="flex-container alignItemsCenter justifySpaceBetween" style="margin-bottom: 15px;">
+                    <div>
+                        <h4 style="margin: 0 0 5px 0; color: var(--SmartThemeBodyColor);">
+                            <i class="fa-fw fa-solid fa-calendar-days"></i>
+                            定时清理所有用户备份文件
+                        </h4>
+                        <p style="margin: 0; font-size: 0.9em; opacity: 0.8; color: var(--SmartThemeEmColor);">
+                            自动定期清理所有用户的备份文件，释放存储空间
+                        </p>
+                    </div>
+                    <label class="checkbox_label" style="margin: 0; color: var(--SmartThemeBodyColor);">
+                        <input type="checkbox" id="scheduledClearBackupsEnabled" />
+                        <span>启用定时任务</span>
+                    </label>
+                </div>
+
+                <div class="flex-container flexFlowColumn flexGap10" id="scheduledClearBackupsConfig" style="display: none; color: var(--SmartThemeBodyColor);">
+                    <div class="flex-container flexGap10 alignItemsCenter">
+                        <label style="min-width: 120px; color: var(--SmartThemeBodyColor);">Cron表达式:</label>
+                        <input type="text" id="scheduledClearBackupsCron" class="text_pole flex1"
+                               placeholder="例如: 0 2 * * * (每天凌晨2点)"
+                               pattern="[0-9\*\-\,\/\s]+">
+                        <button type="button" class="menu_button menu_button_icon" id="testScheduledClearBackupsCron" title="验证Cron表达式">
+                            <i class="fa-fw fa-solid fa-check"></i>
+                            <span>验证</span>
+                        </button>
+                    </div>
+
+                    <div class="cronExamples" style="margin-top: 10px; padding: 10px; background: var(--SmartThemeChatTintColor); border-radius: 5px; font-size: 0.85em; color: var(--SmartThemeBodyColor); border: 1px solid var(--SmartThemeBorderColor);">
+                        <strong style="color: var(--SmartThemeBodyColor);">常用Cron表达式示例：</strong>
+                        <ul style="margin: 5px 0 0 0; padding-left: 20px; color: var(--SmartThemeEmColor);">
+                            <li style="margin: 5px 0;"><code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">0 2 * * *</code> - 每天凌晨2点执行</li>
+                            <li style="margin: 5px 0;"><code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">0 0 * * 0</code> - 每周日凌晨执行</li>
+                            <li style="margin: 5px 0;"><code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">0 0 1 * *</code> - 每月1号凌晨执行</li>
+                            <li style="margin: 5px 0;"><code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">0 */6 * * *</code> - 每6小时执行一次</li>
+                            <li style="margin: 5px 0;"><code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">0 0 0 * * 0</code> - 每周日凌晨执行</li>
+                        </ul>
+                        <p style="margin: 5px 0 0 0; opacity: 0.9; color: var(--SmartThemeEmColor);">
+                            Cron格式: <code style="background: var(--SmartThemeBlurTintColor); padding: 2px 6px; border-radius: 3px; color: var(--SmartThemeQuoteColor); border: 1px solid var(--SmartThemeBorderColor);">分钟 小时 日 月 星期</code>
+                        </p>
+                    </div>
+
+                    <div class="flex-container flexGap10" style="margin-top: 10px;">
+                        <button type="button" class="menu_button menu_button_icon" id="saveScheduledClearBackups">
+                            <i class="fa-fw fa-solid fa-save"></i>
+                            <span>保存配置</span>
+                        </button>
+                        <button type="button" class="menu_button menu_button_icon" id="testScheduledClearBackups" title="立即执行一次清理任务（用于测试）">
+                            <i class="fa-fw fa-solid fa-play"></i>
+                            <span>立即执行</span>
+                        </button>
+                        <button type="button" class="menu_button menu_button_icon" id="loadScheduledClearBackups">
+                            <i class="fa-fw fa-solid fa-sync"></i>
+                            <span>刷新状态</span>
+                        </button>
+                    </div>
+
+                    <div id="scheduledClearBackupsStatus" style="margin-top: 10px; padding: 10px; border-radius: 5px; display: none;"></div>
+                </div>
+            </div>
+        </div>
     </div>
     <div class="navTab registerNewUserBlock" style="display: none;">
         <form class="flex-container flexFlowColumn flexGap10 userCreateForm" action="javascript:void(0);">

@@ -1472,9 +1472,218 @@ if (typeof window.initializeAdminExtensions === 'function') {
     // 绑定一键删除30天未登录用户按钮
     template.find('.deleteInactiveUsersButton').on('click', () => deleteInactiveUsers(renderUsers));
 
+    // 绑定定时任务相关按钮
+    initScheduledTasksHandlers(template);
+
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: true, allowVerticalScrolling: true, allowHorizontalScrolling: true });
 
     renderUsers();
+}
+
+/**
+ * 初始化定时任务处理器
+ * @param {jQuery} template - 模板jQuery对象
+ */
+function initScheduledTasksHandlers(template) {
+    const enabledCheckbox = template.find('#scheduledClearBackupsEnabled');
+    const configDiv = template.find('#scheduledClearBackupsConfig');
+    const cronInput = template.find('#scheduledClearBackupsCron');
+    const saveButton = template.find('#saveScheduledClearBackups');
+    const testButton = template.find('#testScheduledClearBackups');
+    const loadButton = template.find('#loadScheduledClearBackups');
+    const testCronButton = template.find('#testScheduledClearBackupsCron');
+    const statusDiv = template.find('#scheduledClearBackupsStatus');
+
+    // 切换启用/禁用状态
+    enabledCheckbox.on('change', function() {
+        if ($(this).is(':checked')) {
+            configDiv.slideDown();
+        } else {
+            configDiv.slideUp();
+        }
+    });
+
+    // 验证Cron表达式
+    testCronButton.on('click', async function() {
+        const cronExpression = cronInput.val().trim();
+        if (!cronExpression) {
+            showScheduledTaskStatus(statusDiv, '请输入Cron表达式', 'error');
+            return;
+        }
+
+        try {
+            // 使用简单的正则验证（实际验证在服务端）
+            const cronPattern = /^(\*|([0-9]|[1-5][0-9])|\*\/([0-9]|[1-5][0-9]))\s+(\*|([0-9]|1[0-9]|2[0-3])|\*\/([0-9]|1[0-9]|2[0-3]))\s+(\*|([1-9]|[12][0-9]|3[01])|\*\/([1-9]|[12][0-9]|3[01]))\s+(\*|([1-9]|1[0-2])|\*\/([1-9]|1[0-2]))\s+(\*|([0-6])|\*\/([0-6]))$/;
+            if (cronPattern.test(cronExpression)) {
+                showScheduledTaskStatus(statusDiv, 'Cron表达式格式正确', 'success');
+            } else {
+                showScheduledTaskStatus(statusDiv, 'Cron表达式格式可能不正确，请检查', 'warning');
+            }
+        } catch (error) {
+            console.error('Error validating cron:', error);
+            showScheduledTaskStatus(statusDiv, '验证失败: ' + error.message, 'error');
+        }
+    });
+
+    // 保存配置
+    saveButton.on('click', async function() {
+        const enabled = enabledCheckbox.is(':checked');
+        const cronExpression = cronInput.val().trim();
+
+        if (enabled && !cronExpression) {
+            showScheduledTaskStatus(statusDiv, '启用定时任务时必须提供Cron表达式', 'error');
+            return;
+        }
+
+        const button = $(this);
+        const originalText = button.html();
+        button.prop('disabled', true);
+        button.html('<i class="fa-fw fa-solid fa-spinner fa-spin"></i><span>保存中...</span>');
+
+        try {
+            const response = await fetch('/api/scheduled-tasks/config', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    enabled: enabled,
+                    cronExpression: cronExpression,
+                }),
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || '保存配置失败');
+            }
+
+            const data = await response.json();
+            showScheduledTaskStatus(statusDiv, data.message || '配置已保存', 'success');
+            toastr.success(data.message || '定时任务配置已保存', '成功');
+        } catch (error) {
+            console.error('Error saving scheduled task config:', error);
+            showScheduledTaskStatus(statusDiv, '保存失败: ' + error.message, 'error');
+            toastr.error('保存定时任务配置失败: ' + error.message, '错误');
+        } finally {
+            button.prop('disabled', false);
+            button.html(originalText);
+        }
+    });
+
+    // 立即执行
+    testButton.on('click', async function() {
+        if (!confirm('确定要立即执行清理所有用户备份文件的任务吗？')) {
+            return;
+        }
+
+        const button = $(this);
+        const originalText = button.html();
+        button.prop('disabled', true);
+        button.html('<i class="fa-fw fa-solid fa-spinner fa-spin"></i><span>执行中...</span>');
+
+        try {
+            const response = await fetch('/api/scheduled-tasks/execute/clear-all-backups', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || '执行失败');
+            }
+
+            const data = await response.json();
+            showScheduledTaskStatus(statusDiv, data.message || '任务已开始执行，请查看服务器日志', 'success');
+            toastr.info(data.message || '清理任务已开始执行，请查看服务器日志了解详情', '执行中');
+        } catch (error) {
+            console.error('Error executing scheduled task:', error);
+            showScheduledTaskStatus(statusDiv, '执行失败: ' + error.message, 'error');
+            toastr.error('执行清理任务失败: ' + error.message, '错误');
+        } finally {
+            button.prop('disabled', false);
+            button.html(originalText);
+        }
+    });
+
+    // 加载配置
+    loadButton.on('click', loadScheduledTaskConfig);
+
+    // 初始加载配置
+    loadScheduledTaskConfig();
+
+    /**
+     * 加载定时任务配置
+     */
+    async function loadScheduledTaskConfig() {
+        try {
+            const response = await fetch('/api/scheduled-tasks/config', {
+                method: 'GET',
+                headers: getRequestHeaders(),
+            });
+
+            if (!response.ok) {
+                throw new Error('加载配置失败');
+            }
+
+            const data = await response.json();
+            const config = data.config || {};
+            const status = data.status || {};
+
+            // 更新UI
+            enabledCheckbox.prop('checked', config.enabled || false);
+            cronInput.val(config.cronExpression || '');
+
+            if (config.enabled) {
+                configDiv.show();
+            } else {
+                configDiv.hide();
+            }
+
+            // 显示状态
+            if (status.enabled && status.running) {
+                showScheduledTaskStatus(statusDiv, `定时任务已启用并运行中 (Cron: ${config.cronExpression})`, 'success');
+            } else if (config.enabled) {
+                showScheduledTaskStatus(statusDiv, '定时任务已配置但未运行', 'warning');
+            } else {
+                showScheduledTaskStatus(statusDiv, '定时任务未启用', 'info');
+            }
+        } catch (error) {
+            console.error('Error loading scheduled task config:', error);
+            showScheduledTaskStatus(statusDiv, '加载配置失败: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * 显示定时任务状态
+     */
+    function showScheduledTaskStatus(container, message, type) {
+        const colors = {
+            success: '#28a745',
+            error: '#dc3545',
+            warning: '#ffc107',
+            info: '#17a2b8',
+        };
+        const bgColors = {
+            success: '#d4edda',
+            error: '#f8d7da',
+            warning: '#fff3cd',
+            info: '#d1ecf1',
+        };
+
+        container.css({
+            'background-color': bgColors[type] || bgColors.info,
+            'color': colors[type] || colors.info,
+            'border': `1px solid ${colors[type] || colors.info}`,
+            'padding': '10px',
+            'border-radius': '5px',
+            'margin-top': '10px',
+        }).text(message).show();
+
+        // 3秒后自动隐藏（除了错误信息）
+        if (type !== 'error') {
+            setTimeout(() => {
+                container.fadeOut();
+            }, 3000);
+        }
+    }
 }
 
 /**
