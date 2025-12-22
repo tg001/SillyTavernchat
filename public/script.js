@@ -281,6 +281,34 @@ import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 
+/**
+ * @typedef {Object<string, any>} ChatMessage
+ * @typedef {Object<string, any>} ChatMessageExtra
+ * @typedef {Object<string, any>} MediaAttachment
+ * @typedef {Object<string, any>} MediaState
+ * @typedef {number} MessageTimestamp
+ *
+ * @typedef {Object} ChatPageCacheEntry
+ * @property {ChatMessage[]} messages
+ * @property {object|null} header
+ * @property {number|null} cursor
+ * @property {boolean} hasMore
+ * @property {number} updatedAt
+ *
+ * @typedef {Object} ChatPageCacheParams
+ * @property {boolean} [isGroup]
+ * @property {ChatMessage[]} [messages]
+ * @property {object|null} [header]
+ * @property {number|null} [cursor]
+ * @property {boolean} [hasMore]
+ *
+ * @typedef {Object} SaveChatTailOptions
+ * @property {string} fileName
+ * @property {object} header
+ * @property {ChatMessage[]} messages
+ * @property {boolean} [force]
+ */
+
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
     libs,
@@ -562,6 +590,10 @@ function getChatCacheKey({ isGroup = false } = {}) {
     return `char:${avatar}:${chatName}`;
 }
 
+/**
+ * @param {{ isGroup?: boolean }} [options]
+ * @returns {ChatPageCacheEntry|null}
+ */
 export function getCachedChatPage({ isGroup = false } = {}) {
     const key = getChatCacheKey({ isGroup });
     if (!key) return null;
@@ -574,6 +606,9 @@ export function getCachedChatPage({ isGroup = false } = {}) {
     return cached;
 }
 
+/**
+ * @param {ChatPageCacheParams} [options]
+ */
 export function setCachedChatPage({ isGroup = false, messages, header, cursor, hasMore } = {}) {
     const key = getChatCacheKey({ isGroup });
     if (!key) return;
@@ -7091,6 +7126,9 @@ export function saveChatDebounced() {
     }, DEFAULT_SAVE_EDIT_TIMEOUT);
 }
 
+/**
+ * @param {SaveChatTailOptions} [options]
+ */
 async function saveChatTail({ fileName, header, messages, force = false } = {}) {
     const result = await fetch('/api/chats/save-tail', {
         method: 'POST',

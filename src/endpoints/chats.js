@@ -38,6 +38,26 @@ const CHAT_CHUNK_DIR_SUFFIX = '.chunks';
 const CHAT_INDEX_SUFFIX = '.index.json';
 
 /**
+ * @typedef {Object} ChatIndexShard
+ * @property {string} file
+ * @property {number} count
+ * @property {number} size
+ * @property {number|null} last_mes
+ * @property {string} last_message
+ */
+
+/**
+ * @typedef {Object} ChatIndex
+ * @property {number} version
+ * @property {number} chunk_size
+ * @property {number} message_count
+ * @property {number|null} last_mes
+ * @property {string} last_message
+ * @property {number} total_bytes
+ * @property {ChatIndexShard[]} shards
+ */
+
+/**
  * Saves a chat to the backups directory.
  * @param {string} directory The user's backups directory.
  * @param {string} name The name of the chat.
@@ -85,8 +105,8 @@ function getBackupFunction(handle) {
 }
 
 /**
- * Gets a preview message from an array of chat messages
- * @param {Array<Object>} messages - Array of chat messages, each with a 'mes' property
+ * Gets a preview message from a string.
+ * @param {string} message Message text to preview
  * @returns {string} A truncated preview of the last message or empty string if no messages
  */
 function getPreviewText(message) {
@@ -111,7 +131,7 @@ function getChatChunkSize() {
 function pruneChatInfoCache() {
     if (!Number.isFinite(chatInfoCacheLimit) || chatInfoCacheLimit <= 0) return;
     if (chatInfoCache.size <= chatInfoCacheLimit) return;
-    const extra = chatInfoCache.size - chatInfoCacheLimit;
+    let extra = chatInfoCache.size - chatInfoCacheLimit;
     for (const key of chatInfoCache.keys()) {
         chatInfoCache.delete(key);
         if (chatInfoCache.size <= chatInfoCacheLimit) break;
@@ -452,6 +472,7 @@ async function readShardLines(shardPath) {
 
 async function rebuildChatIndex(filePath) {
     const shards = listShardFiles(filePath);
+    /** @type {ChatIndex} */
     const index = {
         version: 1,
         chunk_size: getChatChunkSize(),
@@ -559,12 +580,13 @@ async function readChunkedChatMessages(filePath) {
 
 function updateChatHeaderMetadata(header, messageCount, lastMessage) {
     if (!header || typeof header !== 'object') return;
-    if (!header.chat_metadata || typeof header.chat_metadata !== 'object') {
-        header.chat_metadata = {};
+    const headerData = /** @type {any} */ (header);
+    if (!headerData.chat_metadata || typeof headerData.chat_metadata !== 'object') {
+        headerData.chat_metadata = {};
     }
-    header.chat_metadata.message_count = Math.max(messageCount, 0);
-    header.chat_metadata.last_mes = Number(lastMessage?.send_date ?? Date.now());
-    header.chat_metadata.last_message = typeof lastMessage?.mes === 'string' ? lastMessage.mes : '';
+    headerData.chat_metadata.message_count = Math.max(messageCount, 0);
+    headerData.chat_metadata.last_mes = Number(lastMessage?.send_date ?? Date.now());
+    headerData.chat_metadata.last_message = typeof lastMessage?.mes === 'string' ? lastMessage.mes : '';
 }
 
 function clearChunkDir(filePath) {
@@ -581,6 +603,7 @@ async function writeChunkedChat(filePath, header, messages) {
     ensureChatChunkDir(filePath);
     clearChunkDir(filePath);
 
+    /** @type {ChatIndex} */
     const index = {
         version: 1,
         chunk_size: chunkSize,
@@ -596,7 +619,7 @@ async function writeChunkedChat(filePath, header, messages) {
         const chunk = messages.slice(i, i + chunkSize);
         const shardName = formatShardName(shardIndex++);
         const shardPath = path.join(getChatChunkDir(filePath), shardName);
-        const payload = chunk.map(JSON.stringify).join('\n');
+        const payload = chunk.map((item) => JSON.stringify(item)).join('\n');
         writeFileAtomicSync(shardPath, payload, 'utf8');
         const stats = await fs.promises.stat(shardPath);
         const lastMessage = chunk[chunk.length - 1];
@@ -630,6 +653,7 @@ async function convertLegacyChatToChunks(filePath) {
     ensureChatChunkDir(filePath);
     clearChunkDir(filePath);
 
+    /** @type {ChatIndex} */
     const index = {
         version: 1,
         chunk_size: chunkSize,
@@ -709,6 +733,7 @@ async function truncateChunkedChat(filePath, index, beforeIndex) {
 
     const chunkDir = getChatChunkDir(filePath);
     let offset = 0;
+    /** @type {ChatIndexShard[]} */
     const keptShards = [];
 
     for (const shard of index.shards) {
@@ -764,6 +789,7 @@ async function truncateChunkedChat(filePath, index, beforeIndex) {
         break;
     }
 
+    /** @type {ChatIndex} */
     const newIndex = {
         version: 1,
         chunk_size: getChatChunkSize(),
@@ -790,6 +816,7 @@ async function appendChunkedMessages(filePath, index, messages) {
     if (!messages || messages.length === 0) return index;
     const chunkSize = getChatChunkSize();
     const chunkDir = ensureChatChunkDir(filePath);
+    /** @type {ChatIndex} */
     const nextIndex = index ? { ...index, shards: [...(index.shards || [])] } : {
         version: 1,
         chunk_size: chunkSize,
@@ -802,7 +829,7 @@ async function appendChunkedMessages(filePath, index, messages) {
     nextIndex.chunk_size = chunkSize;
 
     let shardEntry = nextIndex.shards[nextIndex.shards.length - 1] || null;
-    let shardPath = shardEntry ? path.join(chunkDir, shardEntry.file) : null;
+    let shardPath = shardEntry ? path.join(chunkDir, shardEntry.file) : '';
 
     let cursor = 0;
     while (cursor < messages.length) {
@@ -810,7 +837,7 @@ async function appendChunkedMessages(filePath, index, messages) {
             const shardName = formatShardName(nextIndex.shards.length);
             shardPath = path.join(chunkDir, shardName);
             const chunk = messages.slice(cursor, cursor + chunkSize);
-            const payload = chunk.map(JSON.stringify).join('\n');
+            const payload = chunk.map((item) => JSON.stringify(item)).join('\n');
             writeFileAtomicSync(shardPath, payload, 'utf8');
             const stats = await fs.promises.stat(shardPath);
             const lastMessage = chunk[chunk.length - 1];
@@ -833,8 +860,15 @@ async function appendChunkedMessages(filePath, index, messages) {
 
         const available = Math.max(0, chunkSize - shardEntry.count);
         const chunk = messages.slice(cursor, cursor + available);
-        let payloadToAppend = chunk.map(JSON.stringify).join('\n');
+        let payloadToAppend = chunk.map((item) => JSON.stringify(item)).join('\n');
         if (payloadToAppend.length > 0) {
+            if (!shardEntry) {
+                cursor += chunk.length;
+                continue;
+            }
+            if (!shardPath) {
+                shardPath = path.join(chunkDir, shardEntry.file);
+            }
             if (needsLeadingNewline(shardPath)) {
                 payloadToAppend = `\n${payloadToAppend}`;
             }
@@ -858,6 +892,10 @@ async function appendChunkedMessages(filePath, index, messages) {
     return nextIndex;
 }
 
+/**
+ * @param {string} filePath
+ * @returns {Promise<any>}
+ */
 async function readChatHeader(filePath) {
     try {
         const metadataPath = getChatMetadataPath(filePath);
@@ -1188,7 +1226,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
         }
 
         let chatMetadata = null;
-        const header = await readChatHeader(pathToFile);
+        const header = /** @type {any} */ (await readChatHeader(pathToFile));
         if (header && _.isObject(header.chat_metadata)) {
             chatMetadata = header.chat_metadata;
             if (withMetadata) {
@@ -1255,7 +1293,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
     try {
         const directoryName = String(request.body.avatar_url).replace('.png', '');
         const chatData = request.body.chat;
-        let header = Array.isArray(chatData) && chatData.length ? chatData[0] : null;
+        let header = Array.isArray(chatData) && chatData.length ? /** @type {any} */ (chatData[0]) : null;
         const messages = Array.isArray(chatData) ? chatData.slice(1) : [];
         if (header && typeof header === 'object') {
             updateChatHeaderMetadata(header, messages.length, messages[messages.length - 1]);
@@ -1273,7 +1311,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
         if (chatChunkingEnabled) {
             await writeChunkedChat(filePath, header, messages);
         } else {
-            const jsonlData = chatData.map(JSON.stringify).join('\n');
+            const jsonlData = chatData.map((item) => JSON.stringify(item)).join('\n');
             writeFileAtomicSync(filePath, jsonlData, 'utf8');
             writeChatHeader(filePath, header);
         }
@@ -1298,7 +1336,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             console.warn('Failed to update chat info cache after save:', error);
         }
         if (Array.isArray(chatData) && chatData.length) {
-            const jsonlData = chatData.map(JSON.stringify).join('\n');
+            const jsonlData = chatData.map((item) => JSON.stringify(item)).join('\n');
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, jsonlData);
         }
         // 记录聊天活动到系统监控器
@@ -1328,7 +1366,9 @@ router.post('/save-tail', validateAvatarUrlMiddleware, async function (request, 
         const directoryName = String(request.body.avatar_url).replace('.png', '');
         const fileName = `${String(request.body.file_name)}.jsonl`;
         const filePath = path.join(request.user.directories.chats, directoryName, sanitize(fileName));
-        const header = request.body.header && typeof request.body.header === 'object' ? request.body.header : null;
+        const header = request.body.header && typeof request.body.header === 'object'
+            ? /** @type {any} */ (request.body.header)
+            : null;
         const messages = Array.isArray(request.body.messages) ? request.body.messages : [];
         let beforeOffset = Number.isFinite(request.body.before) ? request.body.before : Number(request.body.before ?? 0);
         if (!Number.isFinite(beforeOffset)) {
@@ -1360,7 +1400,7 @@ router.post('/save-tail', validateAvatarUrlMiddleware, async function (request, 
                 };
                 updateChatHeaderMetadata(headerToWrite, messages.length, messages[messages.length - 1]);
                 await writeChunkedChat(filePath, headerToWrite, messages);
-                const jsonlData = [JSON.stringify(headerToWrite), ...messages.map(JSON.stringify)].join('\n');
+                const jsonlData = [JSON.stringify(headerToWrite), ...messages.map((item) => JSON.stringify(item))].join('\n');
                 getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, jsonlData);
                 return response.send({ result: 'ok' });
             }
@@ -1413,7 +1453,7 @@ router.post('/save-tail', validateAvatarUrlMiddleware, async function (request, 
                     chat_metadata: {},
                 };
                 updateChatHeaderMetadata(headerToWrite, messages.length, messages[messages.length - 1]);
-                const jsonlData = [JSON.stringify(headerToWrite), ...messages.map(JSON.stringify)].join('\n');
+                const jsonlData = [JSON.stringify(headerToWrite), ...messages.map((item) => JSON.stringify(item))].join('\n');
                 writeFileAtomicSync(filePath, jsonlData, 'utf8');
                 writeChatHeader(filePath, headerToWrite);
                 getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, jsonlData);
@@ -1423,7 +1463,7 @@ router.post('/save-tail', validateAvatarUrlMiddleware, async function (request, 
             fs.truncateSync(filePath, beforeOffset);
 
             if (messages.length) {
-                let payload = messages.map(JSON.stringify).join('\n');
+                let payload = messages.map((item) => JSON.stringify(item)).join('\n');
                 if (needsLeadingNewline(filePath)) {
                     payload = `\n${payload}`;
                 }
@@ -2010,7 +2050,7 @@ router.post('/group/save', async (request, response) => {
     }
 
     let chat_data = request.body.chat;
-    let jsonlData = chat_data.map(JSON.stringify).join('\n');
+    let jsonlData = chat_data.map((item) => JSON.stringify(item)).join('\n');
     if (chatChunkingEnabled) {
         await writeChunkedChat(pathToFile, null, chat_data);
     } else {
@@ -2098,7 +2138,7 @@ router.post('/group/save-tail', async (request, response) => {
         }
     } else {
         if (!fs.existsSync(filePath) || beforeOffset <= 0) {
-            const jsonlData = messages.map(JSON.stringify).join('\n');
+            const jsonlData = messages.map((item) => JSON.stringify(item)).join('\n');
             writeFileAtomicSync(filePath, jsonlData, 'utf8');
             return response.send({ ok: true });
         }
@@ -2106,7 +2146,7 @@ router.post('/group/save-tail', async (request, response) => {
         fs.truncateSync(filePath, beforeOffset);
 
         if (messages.length) {
-            let payload = messages.map(JSON.stringify).join('\n');
+            let payload = messages.map((item) => JSON.stringify(item)).join('\n');
             if (needsLeadingNewline(filePath)) {
                 payload = `\n${payload}`;
             }
@@ -2318,7 +2358,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
         }
 
         // Sort by last message date descending
-        results.sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+        results.sort((a, b) => new Date(b.last_mes ?? 0).getTime() - new Date(a.last_mes ?? 0).getTime());
         return response.send(results);
 
     } catch (error) {
