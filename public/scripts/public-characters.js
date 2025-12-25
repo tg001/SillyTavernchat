@@ -9,6 +9,7 @@ let isLoggedIn = false;
 let publicCharactersCurrentUser = null;
 let currentCharacterId = null;
 let comments = [];
+let autoNameRequestId = 0;
 
 // CSRF令牌获取函数（已不再需要）
 async function getCsrfToken() {
@@ -102,13 +103,240 @@ function showSuccess(message) {
 
 // 格式化日期
 function formatDate(timestamp) {
-    const date = new Date(timestamp);
+    const date = parseDateInput(timestamp);
+    if (!date) {
+        return String(timestamp || '未知');
+    }
     return date.toLocaleDateString('zh-CN', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit'
+    });
+}
+
+function parseDateInput(value) {
+    if (!value) {
+        return null;
+    }
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value;
+    }
+    if (typeof value === 'number') {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (typeof value === 'string') {
+        const parsed = parseHumanizedDateTime(value);
+        if (parsed) {
+            return parsed;
+        }
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
+}
+
+function parseHumanizedDateTime(value) {
+    const match = /^(\d{4})-(\d{1,2})-(\d{1,2}) @(\d{2})h (\d{2})m (\d{2})s (\d{1,3})ms$/.exec(value);
+    if (!match) {
+        return null;
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+    const millisecond = Number(match[7]);
+    const date = new Date(year, month, day, hour, minute, second, millisecond);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+async function getCharacterNameFromFile(file) {
+    const fileName = String(file?.name || '').toLowerCase();
+    const extension = fileName.split('.').pop() || '';
+    if (extension === 'json') {
+        const text = await readFileAsText(file);
+        return extractNameFromCharacterData(parseJsonSafe(text));
+    }
+    if (extension === 'yaml' || extension === 'yml') {
+        const text = await readFileAsText(file);
+        return extractNameFromYaml(text);
+    }
+    if (extension === 'png') {
+        const buffer = await readFileAsArrayBuffer(file);
+        return extractNameFromPng(buffer);
+    }
+    return null;
+}
+
+function parseJsonSafe(text) {
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        console.debug('Failed to parse JSON character card:', error);
+        return null;
+    }
+}
+
+function extractNameFromCharacterData(data) {
+    const name = data?.data?.name || data?.name || data?.char_name;
+    if (typeof name !== 'string') {
+        return null;
+    }
+    const trimmed = name.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractNameFromYaml(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) {
+            continue;
+        }
+        if (!/^\s*name\s*:/.test(line)) {
+            continue;
+        }
+        const indent = line.match(/^\s*/)?.[0]?.length || 0;
+        if (indent > 0) {
+            break;
+        }
+        const value = extractYamlValue(line);
+        if (value) {
+            return value;
+        }
+    }
+
+    let dataIndent = null;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) {
+            continue;
+        }
+        const indent = line.match(/^\s*/)?.[0]?.length || 0;
+        if (dataIndent === null) {
+            if (/^\s*data\s*:\s*$/.test(line)) {
+                dataIndent = indent;
+            }
+            continue;
+        }
+        if (indent <= dataIndent) {
+            dataIndent = null;
+            continue;
+        }
+        if (/^\s*name\s*:/.test(line)) {
+            const value = extractYamlValue(line);
+            if (value) {
+                return value;
+            }
+        }
+    }
+
+    return null;
+}
+
+function extractYamlValue(line) {
+    const match = /^\s*name\s*:\s*(.*)\s*$/.exec(line);
+    if (!match) {
+        return null;
+    }
+    let value = match[1].replace(/\s+#.*$/, '').trim();
+    if (!value || value === '|' || value === '>') {
+        return null;
+    }
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+    }
+    return value.trim() || null;
+}
+
+function extractNameFromPng(buffer) {
+    const data = new Uint8Array(buffer);
+    if (data.length < 8) {
+        return null;
+    }
+    if (data[0] !== 137 || data[1] !== 80 || data[2] !== 78 || data[3] !== 71) {
+        return null;
+    }
+    let offset = 8;
+    let charaText = null;
+    while (offset + 8 <= data.length) {
+        const length = readUint32(data, offset);
+        const type = decodeLatin1(data.slice(offset + 4, offset + 8));
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + length;
+        if (dataEnd > data.length) {
+            break;
+        }
+        if (type === 'tEXt') {
+            const chunkData = data.slice(dataStart, dataEnd);
+            const nullIndex = chunkData.indexOf(0);
+            if (nullIndex > -1) {
+                const keyword = decodeLatin1(chunkData.slice(0, nullIndex)).toLowerCase();
+                const text = decodeLatin1(chunkData.slice(nullIndex + 1));
+                if (keyword === 'ccv3') {
+                    const name = parseNameFromBase64Card(text);
+                    if (name) {
+                        return name;
+                    }
+                } else if (keyword === 'chara' && !charaText) {
+                    charaText = text;
+                }
+            }
+        }
+        offset = dataEnd + 4;
+        if (type === 'IEND') {
+            break;
+        }
+    }
+    return charaText ? parseNameFromBase64Card(charaText) : null;
+}
+
+function parseNameFromBase64Card(base64Text) {
+    try {
+        const jsonText = decodeBase64ToUtf8(base64Text);
+        return extractNameFromCharacterData(JSON.parse(jsonText));
+    } catch (error) {
+        console.debug('Failed to parse PNG character metadata:', error);
+        return null;
+    }
+}
+
+function decodeBase64ToUtf8(base64Text) {
+    const binary = atob(base64Text.replace(/\s+/g, ''));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+}
+
+function readUint32(data, offset) {
+    return ((data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3]) >>> 0;
+}
+
+function decodeLatin1(bytes) {
+    return new TextDecoder('latin1').decode(bytes);
+}
+
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+        reader.readAsText(file);
+    });
+}
+
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+        reader.readAsArrayBuffer(file);
     });
 }
 
@@ -221,18 +449,25 @@ function updateLoadMoreButton() {
     }
 }
 
+function getAvatarUrl(character) {
+    const avatarName = String(character?.avatar || '');
+    const lowerName = avatarName.toLowerCase();
+    const isImage = lowerName.endsWith('.png')
+        || lowerName.endsWith('.jpg')
+        || lowerName.endsWith('.jpeg')
+        || lowerName.endsWith('.gif')
+        || lowerName.endsWith('.webp');
+    if (avatarName && isImage) {
+        const encodedAvatar = encodeURIComponent(avatarName);
+        return `/api/public-characters/avatar/${encodedAvatar}`;
+    }
+    return '/img/default-expressions/neutral.png';
+}
+
 // 创建角色卡元素
 function createCharacterCard(character) {
     // 根据文件类型确定头像URL
-    let avatarUrl;
-    if (character.avatar.endsWith('.png')) {
-        // 对中文字符进行URL编码
-        const encodedAvatar = encodeURIComponent(character.avatar);
-        avatarUrl = `/api/public-characters/avatar/${encodedAvatar}`;
-    } else {
-        // 对于JSON/YAML文件，使用默认头像
-        avatarUrl = '/img/default-expressions/neutral.png';
-    }
+    const avatarUrl = getAvatarUrl(character);
 
     const tags = character.tags || [];
     const tagsHtml = tags.map(tag => `<span class="character-tag">${tag}</span>`).join('');
@@ -322,7 +557,9 @@ function filterCharacters() {
                 return uploaderA.localeCompare(uploaderB);
             case 'date':
             default:
-                return (b.uploaded_at || b.date_added) - (a.uploaded_at || a.date_added);
+                const dateA = parseDateInput(a.uploaded_at || a.date_added);
+                const dateB = parseDateInput(b.uploaded_at || b.date_added);
+                return (dateB?.getTime() || 0) - (dateA?.getTime() || 0);
         }
     });
 
@@ -426,15 +663,7 @@ function showCharacterModal(character) {
     currentCharacterId = character.id;
 
     // 根据文件类型确定头像URL
-    let avatarUrl;
-    if (character.avatar.endsWith('.png')) {
-        // 对中文字符进行URL编码
-        const encodedAvatar = encodeURIComponent(character.avatar);
-        avatarUrl = `/api/public-characters/avatar/${encodedAvatar}`;
-    } else {
-        // 对于JSON/YAML文件，使用默认头像
-        avatarUrl = '/img/default-expressions/neutral.png';
-    }
+    const avatarUrl = getAvatarUrl(character);
 
     const tags = character.tags || [];
     const tagsHtml = tags.map(tag => `<span class="character-tag">${tag}</span>`).join('');
@@ -620,12 +849,23 @@ $(document).ready(async function() {
         });
 
         // 文件选择时自动填充名称
-        $('#characterFile').on('change', function() {
+        $('#characterFile').on('change', async function() {
             const file = /** @type {HTMLInputElement} */ (this).files?.[0];
-            if (file) {
-                const fileName = file.name;
-                const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
-                $('#characterName').val(nameWithoutExt);
+            if (!file) {
+                return;
+            }
+            const fileName = file.name;
+            const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
+            $('#characterName').val(nameWithoutExt);
+            const requestId = ++autoNameRequestId;
+            try {
+                const extractedName = await getCharacterNameFromFile(file);
+                if (!extractedName || requestId !== autoNameRequestId) {
+                    return;
+                }
+                $('#characterName').val(extractedName);
+            } catch (error) {
+                console.debug('Failed to extract character name:', error);
             }
         });
 

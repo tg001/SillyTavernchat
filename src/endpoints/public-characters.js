@@ -7,12 +7,17 @@ import { humanizedISO8601DateTime } from '../util.js';
 
 // 公用角色卡存储目录
 const PUBLIC_CHARACTERS_DIR = path.join(globalThis.DATA_ROOT, 'public_characters');
+// 公用角色卡文件存储目录（避免与元数据JSON混在一起）
+const PUBLIC_CHARACTER_FILES_DIR = path.join(PUBLIC_CHARACTERS_DIR, 'files');
 // 角色卡评论存储目录
 const CHARACTER_COMMENTS_DIR = path.join(globalThis.DATA_ROOT, 'forum_data', 'character_comments');
 
 // 确保目录存在
 if (!fs.existsSync(PUBLIC_CHARACTERS_DIR)) {
     fs.mkdirSync(PUBLIC_CHARACTERS_DIR, { recursive: true });
+}
+if (!fs.existsSync(PUBLIC_CHARACTER_FILES_DIR)) {
+    fs.mkdirSync(PUBLIC_CHARACTER_FILES_DIR, { recursive: true });
 }
 if (!fs.existsSync(CHARACTER_COMMENTS_DIR)) {
     fs.mkdirSync(CHARACTER_COMMENTS_DIR, { recursive: true });
@@ -59,6 +64,9 @@ function getAllPublicCharacters() {
                     const characterPath = path.join(PUBLIC_CHARACTERS_DIR, file);
                     const characterData = fs.readFileSync(characterPath, 'utf8');
                     const character = JSON.parse(characterData);
+                    if (!character || !character.id || !character.uploaded_at) {
+                        continue;
+                    }
                     characters.push(character);
                 } catch (error) {
                     console.error(`Error reading character file ${file}:`, error);
@@ -218,7 +226,7 @@ router.post('/upload', validateFileType, async function (request, response) {
             // 移动文件到公共角色卡目录
             const characterId = generateCharacterId();
             const fileName = `${characterId}.${fileType}`;
-            const finalPath = path.join(PUBLIC_CHARACTERS_DIR, fileName);
+            const finalPath = path.join(PUBLIC_CHARACTER_FILES_DIR, fileName);
 
             fs.renameSync(file.path, finalPath);
             avatarPath = fileName;
@@ -295,6 +303,16 @@ router.delete('/:characterId', async function (request, response) {
         // 删除角色卡文件
         const characterPath = path.join(PUBLIC_CHARACTERS_DIR, `${characterId}.json`);
         fs.unlinkSync(characterPath);
+        if (character.avatar) {
+            const avatarPath = path.join(PUBLIC_CHARACTER_FILES_DIR, character.avatar);
+            if (fs.existsSync(avatarPath)) {
+                fs.unlinkSync(avatarPath);
+            }
+            const legacyAvatarPath = path.join(PUBLIC_CHARACTERS_DIR, character.avatar);
+            if (fs.existsSync(legacyAvatarPath)) {
+                fs.unlinkSync(legacyAvatarPath);
+            }
+        }
 
         console.info(`Public character "${character.name}" deleted by ${request.user.profile.handle}`);
         response.json({ success: true });
@@ -366,7 +384,9 @@ router.get('/avatar/:filename', async function (request, response) {
         const decodedFilename = decodeURIComponent(filename);
 
         // 构造头像文件路径
-        const avatarPath = path.join(PUBLIC_CHARACTERS_DIR, decodedFilename);
+        const primaryPath = path.join(PUBLIC_CHARACTER_FILES_DIR, decodedFilename);
+        const fallbackPath = path.join(PUBLIC_CHARACTERS_DIR, decodedFilename);
+        const avatarPath = fs.existsSync(primaryPath) ? primaryPath : fallbackPath;
 
         if (!fs.existsSync(avatarPath)) {
             return response.status(404).json({ error: 'Avatar not found' });
@@ -444,7 +464,10 @@ async function importCharacterToUserLibrary(character, user) {
         // 获取角色卡文件路径
         let characterFilePath = null;
         if (character.avatar && character.avatar !== 'img/ai4.png') {
-            characterFilePath = path.join(PUBLIC_CHARACTERS_DIR, character.avatar);
+            const candidate = path.join(PUBLIC_CHARACTER_FILES_DIR, character.avatar);
+            characterFilePath = fs.existsSync(candidate)
+                ? candidate
+                : path.join(PUBLIC_CHARACTERS_DIR, character.avatar);
         }
 
         if (!characterFilePath || !fs.existsSync(characterFilePath)) {
