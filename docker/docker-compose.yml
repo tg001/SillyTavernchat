@@ -3,7 +3,7 @@ services:
     build: ..
     container_name: sillytavernchat
     hostname: sillytavernchat
-    image: sillytavernchat:latest
+    image: zhaiker/sillytavernchat-zk:latest
     environment:
       - NODE_ENV=production
       - FORCE_COLOR=1

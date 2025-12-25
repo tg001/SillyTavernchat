@@ -13,34 +13,6 @@
 - ✅ **优化加载策略**：打开聊天时仅拉取最近 20 条；点击"继续加载"再拉上一段。
 - ✅ **移动端性能优化**：移动端默认限制 DOM 历史数量（比如只保留最近 200 条消息节点），避免滚动卡顿。
 
-## 🆕 最新更新（核心升级：1.14.0）
-
-- ✅ **核心版本升级**：完成官方 SillyTavern **v1.13.5 → v1.14.0** 的三方合并，保留全部二次开发功能。
-- ✅ **新增官方特性**：
-  - Firefox 缓存失效修复（静态资源即时更新）。
-  - 聊天备份完整性校验与节流控制。
-  - `plugins/` 插件目录与 `default/scaffold/` 内容脚手架。
-  - 全新 `public/scripts/audio-player.js`、扩展化的媒体处理与 SimpleMutex 并发控制。
-- ✅ **类型/依赖同步**：`eslint-plugin-jest`、全量 `index.d.ts`/`public/global.d.ts` 类型增强，前后端共享 `request.user`/`request.file`、`window.userHeartbeat` 等定义。
-- ✅ **自定义功能兼容性验证**：系统监控、OAuth 登录、邮件服务、论坛/邀请码/公共角色卡等扩展逻辑在 1.14.0 核心上全面通过回归测试。
-
-> ⚠️ 如从旧版本升级，请先备份 `/data/` 与 `config.yaml`，再覆盖代码并重新安装依赖。
-
-## 🆕 最新更新（V1.13.12）
-
-### OAuth 第三方登录优化
-- ✅ **修复 Linux.do 用户名获取问题**：成功获取真实用户名（如 `ZhaiKer`），不再使用默认格式
-- ✅ **自动头像同步**：首次登录自动下载并设置第三方账号头像，每次登录自动更新
-- ✅ **灵活的登录方式**：
-  - OAuth 用户（未设置密码）：只能通过第三方 OAuth 登录
-  - OAuth 用户（已设置密码）：可使用 OAuth 登录或用户名密码登录
-- ✅ **智能密码设置**：OAuth 用户首次设置密码时无需输入旧密码，系统自动识别
-- ✅ **友好的用户界面**：
-  - 个人资料显示 OAuth 提供商信息（GitHub / Discord / Linux.do）
-  - 修改密码页面显示 OAuth 用户友好提示
-  - 登录失败时提供清晰的引导信息
-- ✅ **安全验证优化**：智能判断 JWT token 是否包含完整用户信息，自动调用 API 获取用户详情
-
 ## 演示地址
 
 **https://st.zkjd.me**
@@ -239,7 +211,8 @@ sudo sh start.sh
 ```
 
 ### Docker 部署
-官方镜像（Docker Hub）：https://hub.docker.com/r/zhaiker/sillytavernchat-zk
+
+- Docker Hub 镜像名：`sillytavernchat-zk`（https://hub.docker.com/r/zhaiker/sillytavernchat-zk）
 
 #### Docker Compose（推荐）
 ```bash
