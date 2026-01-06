@@ -128,6 +128,36 @@ function getChatChunkSize() {
     return Math.max(200, Math.min(size, 500));
 }
 
+/**
+ * @param {string | number | null | undefined} value
+ * @param {number | null | undefined} fallback
+ * @returns {number | null}
+ */
+function parseSendDate(value, fallback = null) {
+    if (value === null || value === undefined) return fallback;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        const parsed = Date.parse(normalized);
+        if (!Number.isNaN(parsed)) return parsed;
+        const humanizedMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s*@(\d{1,2})h\s+(\d{1,2})m\s+(\d{1,2})s\s+(\d{1,3})ms$/);
+        if (humanizedMatch) {
+            const year = Number(humanizedMatch[1]);
+            const month = Number(humanizedMatch[2]);
+            const day = Number(humanizedMatch[3]);
+            const hour = Number(humanizedMatch[4]);
+            const minute = Number(humanizedMatch[5]);
+            const second = Number(humanizedMatch[6]);
+            const millisecond = Number(humanizedMatch[7]);
+            const humanizedDate = new Date(year, month - 1, day, hour, minute, second, millisecond);
+            const humanizedTime = humanizedDate.getTime();
+            if (!Number.isNaN(humanizedTime)) return humanizedTime;
+        }
+    }
+    return fallback;
+}
+
 function pruneChatInfoCache() {
     if (!Number.isFinite(chatInfoCacheLimit) || chatInfoCacheLimit <= 0) return;
     if (chatInfoCache.size <= chatInfoCacheLimit) return;
@@ -496,7 +526,7 @@ async function rebuildChatIndex(filePath) {
             const lastLine = await readLastLine(shardPath);
             const jsonData = tryParse(lastLine);
             if (jsonData) {
-                lastMesDate = Number(jsonData.send_date ?? lastMesDate);
+                lastMesDate = parseSendDate(jsonData.send_date, lastMesDate);
                 lastMessage = typeof jsonData.mes === 'string' ? jsonData.mes : lastMessage;
             }
         }
@@ -585,7 +615,7 @@ function updateChatHeaderMetadata(header, messageCount, lastMessage) {
         headerData.chat_metadata = {};
     }
     headerData.chat_metadata.message_count = Math.max(messageCount, 0);
-    headerData.chat_metadata.last_mes = Number(lastMessage?.send_date ?? Date.now());
+    headerData.chat_metadata.last_mes = parseSendDate(lastMessage?.send_date, Date.now());
     headerData.chat_metadata.last_message = typeof lastMessage?.mes === 'string' ? lastMessage.mes : '';
 }
 
@@ -623,7 +653,7 @@ async function writeChunkedChat(filePath, header, messages) {
         writeFileAtomicSync(shardPath, payload, 'utf8');
         const stats = await fs.promises.stat(shardPath);
         const lastMessage = chunk[chunk.length - 1];
-        const lastMes = Number(lastMessage?.send_date ?? index.last_mes);
+        const lastMes = parseSendDate(lastMessage?.send_date, index.last_mes);
 
         index.message_count += chunk.length;
         index.total_bytes += stats.size;
@@ -686,7 +716,7 @@ async function convertLegacyChatToChunks(filePath) {
         if (lastMessage) {
             lastMessageObj = lastMessage;
         }
-        const lastMes = Number(lastMessage?.send_date ?? index.last_mes);
+        const lastMes = parseSendDate(lastMessage?.send_date, index.last_mes);
         const lastMessageText = typeof lastMessage?.mes === 'string' ? lastMessage.mes : index.last_message;
 
         index.message_count += buffer.length;
@@ -767,7 +797,7 @@ async function truncateChunkedChat(filePath, index, beforeIndex) {
             const stats = await fs.promises.stat(shardPath);
             const lastLine = keptLines[keptLines.length - 1] || '';
             const lastMessage = tryParse(lastLine);
-            const lastMes = Number(lastMessage?.send_date ?? null);
+            const lastMes = parseSendDate(lastMessage?.send_date, null);
             keptShards.push({
                 file: shard.file,
                 count: keptLines.length,
@@ -841,7 +871,7 @@ async function appendChunkedMessages(filePath, index, messages) {
             writeFileAtomicSync(shardPath, payload, 'utf8');
             const stats = await fs.promises.stat(shardPath);
             const lastMessage = chunk[chunk.length - 1];
-            const lastMes = Number(lastMessage?.send_date ?? nextIndex.last_mes);
+            const lastMes = parseSendDate(lastMessage?.send_date, nextIndex.last_mes);
             shardEntry = {
                 file: shardName,
                 count: chunk.length,
@@ -878,7 +908,7 @@ async function appendChunkedMessages(filePath, index, messages) {
             const lastMessage = chunk[chunk.length - 1];
             shardEntry.count += chunk.length;
             shardEntry.size = stats.size;
-            shardEntry.last_mes = Number(lastMessage?.send_date ?? shardEntry.last_mes);
+            shardEntry.last_mes = parseSendDate(lastMessage?.send_date, shardEntry.last_mes);
             shardEntry.last_message = typeof lastMessage?.mes === 'string' ? lastMessage.mes : shardEntry.last_message;
             nextIndex.total_bytes = nextIndex.total_bytes - previousSize + stats.size;
             nextIndex.message_count += chunk.length;
@@ -1130,7 +1160,7 @@ function countJsonlLines(filePath) {
 function getChatSummaryFromMetadata(chatMetadata) {
     if (!chatMetadata || typeof chatMetadata !== 'object') return {};
     const messageCount = Number(chatMetadata.message_count);
-    const lastMes = Number(chatMetadata.last_mes);
+    const lastMes = parseSendDate(chatMetadata.last_mes, null);
     const lastMessage = typeof chatMetadata.last_message === 'string' ? chatMetadata.last_message : '';
     return {
         messageCount: Number.isFinite(messageCount) ? messageCount : null,
@@ -1254,9 +1284,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
                 if (chunkedIndex.last_message) {
                     lastMessage = chunkedIndex.last_message;
                 }
-                if (Number.isFinite(Number(chunkedIndex.last_mes))) {
-                    lastMesDate = Number(chunkedIndex.last_mes);
-                }
+                lastMesDate = parseSendDate(chunkedIndex.last_mes, lastMesDate);
             }
         }
 
@@ -1270,7 +1298,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
             const jsonData = tryParse(lastLine);
             if (jsonData && (jsonData.name || jsonData.character_name || jsonData.chat_metadata)) {
                 lastMessage = jsonData['mes'] || '[The message is empty]';
-                lastMesDate = Number(jsonData['send_date'] || stats.mtimeMs);
+                lastMesDate = parseSendDate(jsonData['send_date'], stats.mtimeMs);
             } else {
                 console.warn('Found an invalid or corrupted chat file:', pathToFile);
                 res({});
@@ -1329,7 +1357,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 file_size: fileSizeInKB,
                 chat_items: Math.max(messages?.length || 0, 0),
                 mes: typeof lastMessage.mes === 'string' ? lastMessage.mes : '[The message is empty]',
-                last_mes: Number(lastMessage.send_date ?? stats.mtimeMs),
+                last_mes: parseSendDate(lastMessage.send_date, stats.mtimeMs),
                 chat_metadata: header?.chat_metadata,
             }, true);
         } catch (error) {
@@ -1490,7 +1518,7 @@ router.post('/save-tail', validateAvatarUrlMiddleware, async function (request, 
                 file_size: fileSizeInKB,
                 chat_items: chatItems,
                 mes: typeof lastMessage.mes === 'string' ? lastMessage.mes : '[The message is empty]',
-                last_mes: Number(lastMessage.send_date ?? stats.mtimeMs),
+                last_mes: parseSendDate(lastMessage.send_date, stats.mtimeMs),
                 chat_metadata: header?.chat_metadata,
             }, Boolean(header?.chat_metadata));
         } catch (error) {
@@ -2070,7 +2098,7 @@ router.post('/group/save', async (request, response) => {
             file_size: fileSizeInKB,
             chat_items: Math.max(chat_data?.length || 0, 0),
             mes: typeof lastMessage.mes === 'string' ? lastMessage.mes : '[The message is empty]',
-            last_mes: Number(lastMessage.send_date ?? stats.mtimeMs),
+            last_mes: parseSendDate(lastMessage.send_date, stats.mtimeMs),
         }, false);
     } catch (error) {
         console.warn('Failed to update group chat cache after save:', error);
@@ -2169,7 +2197,7 @@ router.post('/group/save-tail', async (request, response) => {
             file_size: fileSizeInKB,
             chat_items: chatItems,
             mes: typeof lastMessage.mes === 'string' ? lastMessage.mes : '[The message is empty]',
-            last_mes: Number(lastMessage.send_date ?? stats.mtimeMs),
+            last_mes: parseSendDate(lastMessage.send_date, stats.mtimeMs),
         }, false);
     } catch (error) {
         console.warn('Failed to update group chat cache after tail save:', error);
@@ -2198,7 +2226,7 @@ async function scanChatFileForQuery(filePath, fragments) {
         if (!jsonData || typeof jsonData.mes !== 'string') continue;
         messageCount++;
         lastMessage = jsonData.mes;
-        lastMesDate = Number(jsonData.send_date ?? lastMesDate);
+        lastMesDate = parseSendDate(jsonData.send_date, lastMesDate);
 
         const text = jsonData.mes.toLowerCase();
         for (const fragment of fragments) {
@@ -2235,7 +2263,7 @@ async function scanChunkedChatForQuery(filePath, fragments) {
             if (!jsonData || typeof jsonData.mes !== 'string') continue;
             messageCount++;
             lastMessage = jsonData.mes;
-            lastMesDate = Number(jsonData.send_date ?? lastMesDate);
+            lastMesDate = parseSendDate(jsonData.send_date, lastMesDate);
 
             const text = jsonData.mes.toLowerCase();
             for (const fragment of fragments) {
@@ -2351,7 +2379,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
                     file_name: chatFile.file_name,
                     file_size: chatFile.file_size,
                     message_count: scan.messageCount,
-                    last_mes: Number(scan.lastMesDate ?? stats.mtimeMs),
+                    last_mes: parseSendDate(scan.lastMesDate, stats.mtimeMs),
                     preview_message: getPreviewText(scan.lastMessage || ''),
                 });
             }
