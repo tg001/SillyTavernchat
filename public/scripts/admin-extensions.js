@@ -25,6 +25,9 @@ function initializeAdminExtensions() {
         // 绑定默认配置相关事件
         bindDefaultConfigEvents();
 
+        // 绑定邮件配置相关事件
+        initializeEmailConfig();
+
         // 检查当前显示的选项卡并自动加载数据
         checkAndLoadCurrentTab();
     });
@@ -2450,15 +2453,6 @@ function initializeEmailConfig() {
     // 绑定测试按钮
     $('#testEmailConfig').off('click').on('click', testEmailConfig);
 }
-
-// 将邮件配置初始化添加到主初始化函数中
-const originalInitialize = window.initializeAdminExtensions;
-window.initializeAdminExtensions = function() {
-    if (typeof originalInitialize === 'function') {
-        originalInitialize();
-    }
-    initializeEmailConfig();
-};
 
 // ============================================================
 // OAuth配置管理
