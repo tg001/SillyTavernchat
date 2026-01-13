@@ -331,7 +331,9 @@ oauth:
     clientId: ""
     clientSecret: ""
     callbackUrl: "http://localhost:8000/api/oauth/linuxdo/callback"
-    # Linux.do OAuth endpoints
+    # OIDC 配置端点（如果配置，将自动从该端点获取授权、令牌和用户信息端点）
+    wellKnownEndpoint: "https://connect.linux.do/.well-known/openid-configuration"
+    # Linux.do OAuth endpoints（如果未配置 wellKnownEndpoint，则使用以下默认值）
     authUrl: "https://connect.linux.do/oauth2/authorize"
     tokenUrl: "https://connect.linux.do/oauth2/token"
     userInfoUrl: "https://connect.linux.do/api/user"

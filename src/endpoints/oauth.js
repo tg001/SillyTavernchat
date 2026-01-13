@@ -126,16 +126,87 @@ function buildCallbackUrl(request, provider) {
     return `${finalProtocol}://${hostname}/api/oauth/${provider}/callback`;
 }
 
+// 存储 OIDC 配置的缓存（避免频繁请求）
+const oidcConfigCache = new Map();
+const OIDC_CACHE_TTL = 60 * 60 * 1000; // 1小时缓存
+
+/**
+ * 从 OIDC 配置端点获取配置
+ * @param {string} wellKnownEndpoint OIDC 配置端点 URL
+ * @returns {Promise<object|null>} OIDC 配置对象，失败返回 null
+ */
+async function fetchOIDCConfig(wellKnownEndpoint) {
+    try {
+        // 检查缓存
+        const cached = oidcConfigCache.get(wellKnownEndpoint);
+        if (cached && (Date.now() - cached.timestamp < OIDC_CACHE_TTL)) {
+            return cached.config;
+        }
+
+        // 从端点获取配置
+        const response = await fetch(wellKnownEndpoint, {
+            headers: {
+                'Accept': 'application/json',
+            },
+        });
+
+        if (!response.ok) {
+            console.error(`Failed to fetch OIDC config from ${wellKnownEndpoint}: ${response.status}`);
+            return null;
+        }
+
+        /** @type {any} */
+        const config = await response.json();
+
+        // 验证必需的字段
+        if (!config.authorization_endpoint || !config.token_endpoint) {
+            console.error('Invalid OIDC config: missing required endpoints');
+            return null;
+        }
+
+        // 缓存配置
+        oidcConfigCache.set(wellKnownEndpoint, {
+            config: config,
+            timestamp: Date.now(),
+        });
+
+        console.log('OIDC config loaded from', wellKnownEndpoint);
+        return config;
+    } catch (error) {
+        console.error(`Error fetching OIDC config from ${wellKnownEndpoint}:`, error.message);
+        return null;
+    }
+}
+
 /**
  * 获取OAuth配置（动态回调URL）
  * @param {express.Request} request Express请求对象
- * @returns {object} OAuth配置对象
+ * @returns {Promise<object>} OAuth配置对象
  */
-function getOAuthConfig(request) {
+async function getOAuthConfig(request) {
     // 动态构建回调URL
     const githubCallbackUrl = getConfigValue('oauth.github.callbackUrl', '', null) || buildCallbackUrl(request, 'github');
     const discordCallbackUrl = getConfigValue('oauth.discord.callbackUrl', '', null) || buildCallbackUrl(request, 'discord');
     const linuxdoCallbackUrl = getConfigValue('oauth.linuxdo.callbackUrl', '', null) || buildCallbackUrl(request, 'linuxdo');
+
+    // Linux.do 配置：支持从 OIDC 配置端点自动发现
+    // 默认端点参考官方文档：https://connect.linux.do/oauth2/authorize, token, /api/user
+    let linuxdoAuthUrl = String(getConfigValue('oauth.linuxdo.authUrl', 'https://connect.linux.do/oauth2/authorize') || 'https://connect.linux.do/oauth2/authorize');
+    let linuxdoTokenUrl = String(getConfigValue('oauth.linuxdo.tokenUrl', 'https://connect.linux.do/oauth2/token') || 'https://connect.linux.do/oauth2/token');
+    let linuxdoUserInfoUrl = String(getConfigValue('oauth.linuxdo.userInfoUrl', 'https://connect.linux.do/api/user') || 'https://connect.linux.do/api/user');
+
+    // 如果配置了 OIDC 配置端点，尝试从端点获取配置
+    const wellKnownEndpoint = getConfigValue('oauth.linuxdo.wellKnownEndpoint', '', null);
+    if (wellKnownEndpoint && wellKnownEndpoint.trim()) {
+        const oidcConfig = await fetchOIDCConfig(wellKnownEndpoint.trim());
+        if (oidcConfig) {
+            // 使用从 OIDC 配置端点获取的端点
+            linuxdoAuthUrl = oidcConfig.authorization_endpoint || linuxdoAuthUrl;
+            linuxdoTokenUrl = oidcConfig.token_endpoint || linuxdoTokenUrl;
+            // userinfo_endpoint 可能不存在，使用默认值
+            linuxdoUserInfoUrl = oidcConfig.userinfo_endpoint || linuxdoUserInfoUrl;
+        }
+    }
 
     return {
         github: {
@@ -161,9 +232,9 @@ function getOAuthConfig(request) {
             clientId: String(getConfigValue('oauth.linuxdo.clientId', '') || ''),
             clientSecret: String(getConfigValue('oauth.linuxdo.clientSecret', '') || ''),
             callbackUrl: linuxdoCallbackUrl,
-            authUrl: String(getConfigValue('oauth.linuxdo.authUrl', 'https://connect.linux.do/oauth2/authorize') || 'https://connect.linux.do/oauth2/authorize'),
-            tokenUrl: String(getConfigValue('oauth.linuxdo.tokenUrl', 'https://connect.linux.do/oauth2/token') || 'https://connect.linux.do/oauth2/token'),
-            userInfoUrl: String(getConfigValue('oauth.linuxdo.userInfoUrl', 'https://connect.linux.do/api/user') || 'https://connect.linux.do/oauth2/userinfo'),
+            authUrl: linuxdoAuthUrl,
+            tokenUrl: linuxdoTokenUrl,
+            userInfoUrl: linuxdoUserInfoUrl,
         },
     };
 }
@@ -183,7 +254,7 @@ function generateState() {
  */
 router.get('/config', async (request, response) => {
     try {
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
         const config = {
             github: {
                 enabled: oauthConfig.github.enabled && !!oauthConfig.github.clientId,
@@ -207,7 +278,7 @@ router.get('/config', async (request, response) => {
  */
 router.get('/github', async (request, response) => {
     try {
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
         if (!oauthConfig.github.enabled || !oauthConfig.github.clientId) {
             return response.status(400).json({ error: 'GitHub OAuth未启用' });
         }
@@ -242,7 +313,7 @@ router.get('/github', async (request, response) => {
  */
 router.get('/discord', async (request, response) => {
     try {
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
         if (!oauthConfig.discord.enabled || !oauthConfig.discord.clientId) {
             return response.status(400).json({ error: 'Discord OAuth未启用' });
         }
@@ -278,7 +349,7 @@ router.get('/discord', async (request, response) => {
  */
 router.get('/linuxdo', async (request, response) => {
     try {
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
         if (!oauthConfig.linuxdo.enabled || !oauthConfig.linuxdo.clientId) {
             return response.status(400).json({ error: 'Linux.do OAuth未启用' });
         }
@@ -293,11 +364,13 @@ router.get('/linuxdo', async (request, response) => {
             }
         }
 
+        // Linux.do 支持标准 OAuth2 和 OIDC
+        // 根据官方文档，基本参数为 response_type=code, client_id, state
+        // redirect_uri 和 scope 是可选的
         const params = new URLSearchParams({
             client_id: oauthConfig.linuxdo.clientId,
             redirect_uri: oauthConfig.linuxdo.callbackUrl,
             response_type: 'code',
-            scope: 'openid profile email',
             state: state,
         });
 
@@ -315,7 +388,7 @@ router.get('/linuxdo', async (request, response) => {
 router.get('/github/callback', async (request, response) => {
     try {
         const { code, state } = request.query;
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
 
         // 验证state
         const cachedState = oauthStateCache.get(state);
@@ -371,7 +444,7 @@ router.get('/github/callback', async (request, response) => {
 router.get('/discord/callback', async (request, response) => {
     try {
         const { code, state } = request.query;
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
 
         // 验证state
         const cachedState = oauthStateCache.get(state);
@@ -429,7 +502,7 @@ router.get('/discord/callback', async (request, response) => {
 router.get('/linuxdo/callback', async (request, response) => {
     try {
         const { code, state } = request.query;
-        const oauthConfig = getOAuthConfig(request);
+        const oauthConfig = await getOAuthConfig(request);
 
         // 验证state
         const cachedState = oauthStateCache.get(state);

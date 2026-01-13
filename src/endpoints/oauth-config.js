@@ -61,9 +61,10 @@ router.get('/get', requireAdminMiddleware, async (request, response) => {
                 clientSecret: config?.oauth?.linuxdo?.clientSecret || '',
                 callbackUrl: config?.oauth?.linuxdo?.callbackUrl || '',
                 defaultCallbackUrl: defaultLinuxdoCallback,
+                wellKnownEndpoint: config?.oauth?.linuxdo?.wellKnownEndpoint || 'https://connect.linux.do/.well-known/openid-configuration',
                 authUrl: config?.oauth?.linuxdo?.authUrl || 'https://connect.linux.do/oauth2/authorize',
                 tokenUrl: config?.oauth?.linuxdo?.tokenUrl || 'https://connect.linux.do/oauth2/token',
-                userInfoUrl: config?.oauth?.linuxdo?.userInfoUrl || 'https://connect.linux.do/oauth2/userinfo',
+                userInfoUrl: config?.oauth?.linuxdo?.userInfoUrl || 'https://connect.linux.do/api/user',
             },
         };
 
@@ -124,9 +125,10 @@ router.post('/save', requireAdminMiddleware, async (request, response) => {
             enabled: Boolean(linuxdo.enabled),
             clientId: String(linuxdo.clientId || ''),
             clientSecret: String(linuxdo.clientSecret || ''),
+            wellKnownEndpoint: String(linuxdo.wellKnownEndpoint || 'https://connect.linux.do/.well-known/openid-configuration'),
             authUrl: String(linuxdo.authUrl || 'https://connect.linux.do/oauth2/authorize'),
             tokenUrl: String(linuxdo.tokenUrl || 'https://connect.linux.do/oauth2/token'),
-            userInfoUrl: String(linuxdo.userInfoUrl || 'https://connect.linux.do/oauth2/userinfo'),
+            userInfoUrl: String(linuxdo.userInfoUrl || 'https://connect.linux.do/api/user'),
         };
         if (linuxdo.callbackUrl && linuxdo.callbackUrl.trim()) {
             config.oauth.linuxdo.callbackUrl = String(linuxdo.callbackUrl.trim());
