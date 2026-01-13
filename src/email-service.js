@@ -371,19 +371,41 @@ SillyTavern 团队
  * @param {string} to 收件人邮箱
  * @param {string} userName 用户名
  * @param {number} daysInactive 未登录天数
+ * @param {number} storageSize 存储占用（字节）
+ * @param {string} siteUrl 站点网址
  * @returns {Promise<boolean>} 是否发送成功
  */
-export async function sendInactiveUserDeletionNotice(to, userName, daysInactive) {
-    const subject = 'SillyTavern - 账户删除通知';
+export async function sendInactiveUserDeletionNotice(to, userName, daysInactive, storageSize, siteUrl) {
+    const durationLabelMap = new Map([
+        [7, '1周'],
+        [15, '半个月'],
+        [30, '1个月'],
+        [60, '2个月'],
+    ]);
+    const durationLabel = durationLabelMap.get(daysInactive) || `${daysInactive} 天`;
+    const storageMiB = Number.isFinite(storageSize) ? (storageSize / 1024 / 1024) : 0;
+    const storageLabel = storageMiB.toFixed(2);
+    const siteLine = siteUrl ? `站点入口：${siteUrl}` : '站点入口：请联系管理员获取';
+
+    const subject = '叮咚！这里有一封来自酒馆的“寻人启事” 💌';
     const text = `
-尊敬的 ${userName}，
+亲爱的 ${userName} 小伙伴：
 
-由于您已超过 ${daysInactive} 天未登录，系统已按照管理策略删除您的账户数据。
+   好久不见呀！酒馆里的壁炉依旧暖和，可老板娘发现您的专属座位上已经落了一层薄薄的灰尘——数了数指头，您已经有 ${durationLabel} （约 ${daysInactive} 天）没来喝一杯、聊聊天了呢。
 
-如果这不是您本人的情况，请尽快联系管理员。
+虽然您的行李只占用了轻飘飘的 ${storageLabel} MiB，但为了给更多刚上路的冒险者腾出休息的位置，我们不得不先把您的房间暂时“退房打扫”了。
 
-祝好，
-SillyTavern 团队
+别担心，酒馆的大门永远为您敞开，您的回忆我们都会珍藏在风里。
+
+为了把空间留给还在热闹聊天的伙伴，我们先帮你把账户内容做了清空整理。
+
+如果您哪天想念这里的空气了，随时欢迎再次光临，开启新的冒险！
+
+踏入酒馆的路： ${siteLine}
+
+期待在酒馆再次遇见闪闪发光的你 ~ ✨
+
+如需帮助，请联系管理员。
     `.trim();
 
     const html = `
@@ -431,14 +453,18 @@ SillyTavern 团队
 </head>
 <body>
     <div class="header">
-        <h1>账户删除通知</h1>
+        <h1>小酒馆整理通知</h1>
     </div>
     <div class="content">
-        <p>尊敬的 <strong>${userName}</strong>，</p>
+        <p>亲爱的 <strong>${userName}</strong> 小伙伴：</p>
         <div class="notice">
-            <p>由于您已超过 <strong>${daysInactive}</strong> 天未登录，系统已按照管理策略删除您的账户数据。</p>
+            <p>我们发现你已经有 <strong>${durationLabel}</strong> 没来酒馆啦（约 ${daysInactive} 天）。</p>
+            <p>你的酒馆背包占用约 <strong>${storageLabel} MiB</strong>。</p>
         </div>
-        <p>如果这不是您本人的情况，请尽快联系管理员。</p>
+        <p>为了把空间留给还在热闹聊天的伙伴，我们先帮你把账户内容做了清空整理。</p>
+        <p>别担心，随时欢迎你回家重新开张，我们在酒馆等你。</p>
+        <p>站点入口：${siteUrl ? `<a href="${siteUrl}">${siteUrl}</a>` : '请联系管理员获取'}</p>
+        <p>如需帮助，请联系管理员。</p>
     </div>
     <div class="footer">
         <p>此邮件由 SillyTavern 系统自动发送，请勿回复。</p>

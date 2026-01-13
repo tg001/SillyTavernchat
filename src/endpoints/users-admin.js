@@ -518,6 +518,10 @@ router.post('/delete-inactive-users', requireAdminMiddleware, async (request, re
         const maxStorageBytes = maxStorageMiB ? maxStorageMiB * 1024 * 1024 : null;
         const storageFilterMessage = maxStorageMiB ? ` 且存储占用不超过 ${maxStorageMiB} MiB` : '';
         const now = Date.now();
+        const forwardedProto = request.get('x-forwarded-proto');
+        const protocol = forwardedProto ? forwardedProto.split(',')[0] : request.protocol;
+        const host = request.get('x-forwarded-host') || request.get('host');
+        const siteUrl = host ? `${protocol}://${host}` : '';
 
         // 获取所有用户
         const users = await storage.values(x => x.key.startsWith(KEY_PREFIX));
@@ -593,6 +597,8 @@ router.post('/delete-inactive-users', requireAdminMiddleware, async (request, re
                                     user.email.trim(),
                                     user.name,
                                     daysSinceLastActivity,
+                                    storageSize,
+                                    siteUrl,
                                 );
                                 emailNotified = sent;
                                 if (!sent) {
