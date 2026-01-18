@@ -43,6 +43,10 @@ const defaultAssistantAvatar = 'default_Assistant.png';
 const DEFAULT_DISPLAYED = 3;
 const MAX_DISPLAYED = 15;
 
+// 角色卡分页配置
+const CHARACTERS_PER_PAGE = 10;
+let welcomeCharactersCurrentPage = 1;
+
 export function getPermanentAssistantAvatar() {
     const assistantAvatar = accountStorage.getItem(assistantAvatarKey);
     if (assistantAvatar === null) {
@@ -85,9 +89,6 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
     }
 
     await sendWelcomePanel(recentChats, expand);
-    await unshallowPermanentAssistant();
-    sendAssistantMessage();
-    sendWelcomePrompt();
 }
 
 /**
@@ -150,6 +151,38 @@ function sendWelcomePrompt() {
 }
 
 /**
+ * Gets character data for welcome panel display
+ * @param {number} page Current page number (1-based)
+ * @returns {object} Character display data
+ */
+function getWelcomeCharactersData(page = 1) {
+    const totalCharacters = characters.length;
+    const totalPages = Math.ceil(totalCharacters / CHARACTERS_PER_PAGE) || 1;
+    const currentPage = Math.min(Math.max(1, page), totalPages);
+    const startIndex = (currentPage - 1) * CHARACTERS_PER_PAGE;
+    const endIndex = Math.min(startIndex + CHARACTERS_PER_PAGE, totalCharacters);
+
+    const displayCharacters = characters.slice(startIndex, endIndex).map((char, idx) => ({
+        index: startIndex + idx,
+        avatar: char.avatar,
+        name: char.name,
+        // 使用原图而不是缩略图，确保清晰度
+        avatarUrl: char.avatar && char.avatar !== 'none' ? `/characters/${encodeURIComponent(char.avatar)}` : '/img/default-expressions/neutral.png',
+    }));
+
+    return {
+        displayCharacters,
+        characterCount: totalCharacters,
+        noCharacters: totalCharacters === 0,
+        hasMorePages: totalPages > 1,
+        currentPage,
+        totalPages,
+        canGoPrev: currentPage > 1,
+        canGoNext: currentPage < totalPages,
+    };
+}
+
+/**
  * Sends the welcome panel to the chat.
  * @param {RecentChat[]} chats List of recent chats
  * @param {boolean} [expand=false] If true, expands the recent chats section
@@ -162,11 +195,16 @@ async function sendWelcomePanel(chats, expand = false) {
             console.error('Chat element not found');
             return;
         }
+
+        // 获取角色卡数据
+        const charactersData = getWelcomeCharactersData(welcomeCharactersCurrentPage);
+
         const templateData = {
             chats,
             empty: !chats.length,
             version: displayVersion,
             more: chats.some(chat => chat.hidden),
+            ...charactersData,
         };
         const template = await renderTemplateAsync('welcomePanel', templateData);
         const fragment = document.createRange().createContextualFragment(template);
@@ -222,6 +260,36 @@ async function sendWelcomePanel(chats, expand = false) {
                 await newAssistantChat({ temporary: true });
                 if (sendTextArea instanceof HTMLTextAreaElement) {
                     sendTextArea.focus();
+                }
+            });
+        });
+
+        // 角色卡点击事件 - 点击后直接进入聊天
+        fragment.querySelectorAll('.welcomeCharacterCard').forEach((card) => {
+            card.addEventListener('click', async () => {
+                const chid = card.getAttribute('data-chid');
+                if (chid !== null) {
+                    await selectCharacterById(Number(chid));
+                }
+            });
+        });
+
+        // 角色卡分页事件
+        fragment.querySelectorAll('.characterPagePrev').forEach((button) => {
+            button.addEventListener('click', async () => {
+                if (welcomeCharactersCurrentPage > 1) {
+                    welcomeCharactersCurrentPage--;
+                    await refreshWelcomeScreen();
+                }
+            });
+        });
+
+        fragment.querySelectorAll('.characterPageNext').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const totalPages = Math.ceil(characters.length / CHARACTERS_PER_PAGE) || 1;
+                if (welcomeCharactersCurrentPage < totalPages) {
+                    welcomeCharactersCurrentPage++;
+                    await refreshWelcomeScreen();
                 }
             });
         });
