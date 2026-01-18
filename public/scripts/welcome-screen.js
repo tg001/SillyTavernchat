@@ -44,7 +44,7 @@ const DEFAULT_DISPLAYED = 3;
 const MAX_DISPLAYED = 15;
 
 // 角色卡分页配置
-const CHARACTERS_PER_PAGE = 10;
+const CHARACTERS_PER_PAGE = 5;  // 每页显示5张，减少网络压力
 let welcomeCharactersCurrentPage = 1;
 
 export function getPermanentAssistantAvatar() {
