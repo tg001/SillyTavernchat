@@ -274,6 +274,9 @@ async function sendWelcomePanel(chats, expand = false) {
             });
         });
 
+        // 初始化角色卡延迟加载
+        initLazyLoadCharacters(fragment);
+
         // 角色卡分页事件
         fragment.querySelectorAll('.characterPagePrev').forEach((button) => {
             button.addEventListener('click', async () => {
@@ -713,6 +716,107 @@ export function assignCharacterAsAssistant(characterId) {
     accountStorage.setItem(assistantAvatarKey, character.avatar);
     printCharactersDebounced();
     toastr.success(t`Set ${character.name} as your assistant.`);
+}
+
+/**
+ * 初始化角色卡延迟加载
+ * @param {DocumentFragment} fragment 模板片段
+ */
+function initLazyLoadCharacters(fragment) {
+    const lazyImages = fragment.querySelectorAll('.characterImage.lazy-load');
+
+    if (lazyImages.length === 0) {
+        return;
+    }
+
+    // 使用 Intersection Observer API 实现延迟加载
+    const imageObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                if (!(img instanceof HTMLImageElement)) {
+                    return;
+                }
+                const dataSrc = img.getAttribute('data-src');
+
+                if (dataSrc) {
+                    // 延迟加载图片
+                    img.src = dataSrc;
+                    img.classList.remove('lazy-load');
+
+                    // 图片加载完成后隐藏占位符
+                    img.addEventListener('load', () => {
+                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+                        if (placeholder instanceof HTMLElement) {
+                            placeholder.style.opacity = '0';
+                            setTimeout(() => {
+                                placeholder.style.display = 'none';
+                            }, 300);
+                        }
+                    }, { once: true });
+
+                    // 图片加载失败时也隐藏占位符
+                    img.addEventListener('error', () => {
+                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+                        if (placeholder instanceof HTMLElement) {
+                            placeholder.style.opacity = '0';
+                            setTimeout(() => {
+                                placeholder.style.display = 'none';
+                            }, 300);
+                        }
+                    }, { once: true });
+
+                    observer.unobserve(img);
+                }
+            }
+        });
+    }, {
+        // 提前200px开始加载
+        rootMargin: '200px',
+        threshold: 0.01
+    });
+
+    // 观察所有需要延迟加载的图片
+    lazyImages.forEach((img) => {
+        imageObserver.observe(img);
+    });
+
+    // 对于前几张图片，使用延迟加载（分批加载）
+    const immediateLoadCount = 3;
+    lazyImages.forEach((img, index) => {
+        if (index < immediateLoadCount && img instanceof HTMLImageElement) {
+            // 前3张图片延迟100-300ms加载，避免阻塞首屏
+            setTimeout(() => {
+                const dataSrc = img.getAttribute('data-src');
+                if (dataSrc) {
+                    img.src = dataSrc;
+                    img.classList.remove('lazy-load');
+
+                    img.addEventListener('load', () => {
+                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+                        if (placeholder instanceof HTMLElement) {
+                            placeholder.style.opacity = '0';
+                            setTimeout(() => {
+                                placeholder.style.display = 'none';
+                            }, 300);
+                        }
+                    }, { once: true });
+
+                    img.addEventListener('error', () => {
+                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+                        if (placeholder instanceof HTMLElement) {
+                            placeholder.style.opacity = '0';
+                            setTimeout(() => {
+                                placeholder.style.display = 'none';
+                            }, 300);
+                        }
+                    }, { once: true });
+
+                    imageObserver.unobserve(img);
+                }
+            }, 100 * (index + 1)); // 每张图片延迟100ms
+        }
+    });
 }
 
 export function initWelcomeScreen() {
