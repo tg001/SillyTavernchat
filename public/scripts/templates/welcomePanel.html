@@ -90,13 +90,8 @@
             {{#each displayCharacters}}
             <div class="welcomeCharacterCard" data-chid="{{this.index}}" data-avatar="{{this.avatar}}" title="{{this.name}}">
                 <div class="welcomeCharacterAvatar">
-                    {{#if @first}}
-                    <!-- 第一张图片立即加载 -->
-                    <img src="{{this.avatarUrl}}" alt="{{this.name}}" class="characterImage" onerror="this.src='/img/default-expressions/neutral.png'; this.onload=function(){this.parentElement.querySelector('.imagePlaceholder').style.display='none';};" onload="this.parentElement.querySelector('.imagePlaceholder').style.display='none';">
-                    {{else}}
-                    <!-- 其他图片延迟加载 -->
+                    <!-- 所有图片都通过缓存延迟加载 -->
                     <img data-src="{{this.avatarUrl}}" alt="{{this.name}}" class="characterImage lazy-load" src="/img/default-expressions/neutral.png" onerror="this.src='/img/default-expressions/neutral.png';">
-                    {{/if}}
                     <div class="imagePlaceholder">
                         <i class="fa-solid fa-image"></i>
                     </div>

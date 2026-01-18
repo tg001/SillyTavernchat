@@ -47,6 +47,10 @@ const MAX_DISPLAYED = 15;
 const CHARACTERS_PER_PAGE = 5;  // 每页显示5张，减少网络压力
 let welcomeCharactersCurrentPage = 1;
 
+// 角色卡图片缓存配置
+const CHARACTER_IMAGE_CACHE_NAME = 'character-avatars-cache';
+const CHARACTER_IMAGE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24小时缓存
+
 export function getPermanentAssistantAvatar() {
     const assistantAvatar = accountStorage.getItem(assistantAvatarKey);
     if (assistantAvatar === null) {
@@ -719,7 +723,129 @@ export function assignCharacterAsAssistant(characterId) {
 }
 
 /**
- * 初始化角色卡延迟加载
+ * 获取缓存的图片或从服务器加载
+ * @param {string} url 图片URL
+ * @returns {Promise<string>} 图片的 Blob URL 或原始 URL
+ */
+async function getCachedImage(url) {
+    const cacheKey = `char_img_cache_${url}`;
+    const cacheTimeKey = `char_img_time_${url}`;
+
+    try {
+        // 检查 localStorage 中的缓存时间
+        const cachedTime = localStorage.getItem(cacheTimeKey);
+        if (cachedTime) {
+            const cacheAge = Date.now() - parseInt(cachedTime, 10);
+            // 如果缓存未过期，尝试从 Cache API 获取
+            if (cacheAge < CHARACTER_IMAGE_CACHE_DURATION) {
+                const cache = await caches.open(CHARACTER_IMAGE_CACHE_NAME);
+                const cachedResponse = await cache.match(url);
+                if (cachedResponse) {
+                    const blob = await cachedResponse.blob();
+                    return URL.createObjectURL(blob);
+                }
+            }
+        }
+
+        // 缓存不存在或已过期，从服务器获取
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // 克隆响应以便缓存
+        const responseClone = response.clone();
+        const blob = await response.blob();
+
+        // 存入 Cache API
+        const cache = await caches.open(CHARACTER_IMAGE_CACHE_NAME);
+        await cache.put(url, responseClone);
+
+        // 记录缓存时间
+        localStorage.setItem(cacheTimeKey, Date.now().toString());
+
+        return URL.createObjectURL(blob);
+    } catch (error) {
+        console.warn('Failed to cache image:', url, error);
+        // 如果缓存失败，直接返回原始 URL
+        return url;
+    }
+}
+
+/**
+ * 加载带缓存的图片
+ * @param {HTMLImageElement} img 图片元素
+ * @param {string} src 图片URL
+ */
+async function loadCachedImage(img, src) {
+    try {
+        const cachedSrc = await getCachedImage(src);
+        img.src = cachedSrc;
+        img.classList.remove('lazy-load');
+
+        // 图片加载完成后隐藏占位符
+        img.addEventListener('load', () => {
+            const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+            if (placeholder instanceof HTMLElement) {
+                placeholder.style.opacity = '0';
+                setTimeout(() => {
+                    placeholder.style.display = 'none';
+                }, 300);
+            }
+        }, { once: true });
+
+        // 图片加载失败时也隐藏占位符
+        img.addEventListener('error', () => {
+            const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
+            if (placeholder instanceof HTMLElement) {
+                placeholder.style.opacity = '0';
+                setTimeout(() => {
+                    placeholder.style.display = 'none';
+                }, 300);
+            }
+        }, { once: true });
+    } catch (error) {
+        console.warn('Failed to load cached image:', error);
+        img.src = src;
+        img.classList.remove('lazy-load');
+    }
+}
+
+/**
+ * 清理过期的图片缓存
+ */
+async function cleanExpiredImageCache() {
+    try {
+        const keysToRemove = [];
+
+        // 遍历 localStorage 查找过期的缓存时间记录
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('char_img_time_')) {
+                const cachedTime = parseInt(localStorage.getItem(key) || '0', 10);
+                if (Date.now() - cachedTime > CHARACTER_IMAGE_CACHE_DURATION) {
+                    keysToRemove.push(key);
+                    const url = key.replace('char_img_time_', '');
+                    // 从 Cache API 中删除
+                    const cache = await caches.open(CHARACTER_IMAGE_CACHE_NAME);
+                    await cache.delete(url);
+                }
+            }
+        }
+
+        // 删除过期的时间记录
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+
+        if (keysToRemove.length > 0) {
+            console.log(`Cleaned ${keysToRemove.length} expired character image caches`);
+        }
+    } catch (error) {
+        console.warn('Failed to clean expired image cache:', error);
+    }
+}
+
+/**
+ * 初始化角色卡延迟加载（带缓存）
  * @param {DocumentFragment} fragment 模板片段
  */
 function initLazyLoadCharacters(fragment) {
@@ -728,6 +854,9 @@ function initLazyLoadCharacters(fragment) {
     if (lazyImages.length === 0) {
         return;
     }
+
+    // 清理过期缓存
+    cleanExpiredImageCache();
 
     // 使用 Intersection Observer API 实现延迟加载
     const imageObserver = new IntersectionObserver((entries, observer) => {
@@ -740,32 +869,8 @@ function initLazyLoadCharacters(fragment) {
                 const dataSrc = img.getAttribute('data-src');
 
                 if (dataSrc) {
-                    // 延迟加载图片
-                    img.src = dataSrc;
-                    img.classList.remove('lazy-load');
-
-                    // 图片加载完成后隐藏占位符
-                    img.addEventListener('load', () => {
-                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
-                        if (placeholder instanceof HTMLElement) {
-                            placeholder.style.opacity = '0';
-                            setTimeout(() => {
-                                placeholder.style.display = 'none';
-                            }, 300);
-                        }
-                    }, { once: true });
-
-                    // 图片加载失败时也隐藏占位符
-                    img.addEventListener('error', () => {
-                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
-                        if (placeholder instanceof HTMLElement) {
-                            placeholder.style.opacity = '0';
-                            setTimeout(() => {
-                                placeholder.style.display = 'none';
-                            }, 300);
-                        }
-                    }, { once: true });
-
+                    // 使用缓存加载图片
+                    loadCachedImage(img, dataSrc);
                     observer.unobserve(img);
                 }
             }
@@ -781,40 +886,18 @@ function initLazyLoadCharacters(fragment) {
         imageObserver.observe(img);
     });
 
-    // 对于前几张图片，使用延迟加载（分批加载）
-    const immediateLoadCount = 3;
+    // 前几张图片立即开始加载（使用缓存，分批避免阻塞）
+    const immediateLoadCount = 5;  // 一页5张全部预加载
     lazyImages.forEach((img, index) => {
         if (index < immediateLoadCount && img instanceof HTMLImageElement) {
-            // 前3张图片延迟100-300ms加载，避免阻塞首屏
+            // 分批加载，每张间隔50ms，避免阻塞
             setTimeout(() => {
                 const dataSrc = img.getAttribute('data-src');
                 if (dataSrc) {
-                    img.src = dataSrc;
-                    img.classList.remove('lazy-load');
-
-                    img.addEventListener('load', () => {
-                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
-                        if (placeholder instanceof HTMLElement) {
-                            placeholder.style.opacity = '0';
-                            setTimeout(() => {
-                                placeholder.style.display = 'none';
-                            }, 300);
-                        }
-                    }, { once: true });
-
-                    img.addEventListener('error', () => {
-                        const placeholder = img.parentElement?.querySelector('.imagePlaceholder');
-                        if (placeholder instanceof HTMLElement) {
-                            placeholder.style.opacity = '0';
-                            setTimeout(() => {
-                                placeholder.style.display = 'none';
-                            }, 300);
-                        }
-                    }, { once: true });
-
+                    loadCachedImage(img, dataSrc);
                     imageObserver.unobserve(img);
                 }
-            }, 100 * (index + 1)); // 每张图片延迟100ms
+            }, 50 * index); // 第一张立即加载，后续每张延迟50ms
         }
     });
 }
